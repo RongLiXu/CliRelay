@@ -3,6 +3,7 @@ package management
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -31,11 +32,24 @@ func (h *Handler) GetDashboardSummary(c *gin.Context) {
 		codexCount = len(cfg.CodexKey)
 		vertexCount = len(cfg.VertexCompatAPIKey)
 		openaiCount = len(cfg.OpenAICompatibility)
-		apiKeyCount = len(cfg.APIKeys)
+		apiKeyCount = len(cfg.APIKeyEntries)
 	}
 
 	if h.authManager != nil {
-		authFileCount = len(h.authManager.List())
+		for _, auth := range h.authManager.List() {
+			if auth == nil {
+				continue
+			}
+			// Skip runtime-only entries (OAuth tokens, etc.)
+			if len(auth.Attributes) > 0 && strings.EqualFold(strings.TrimSpace(auth.Attributes["runtime_only"]), "true") {
+				continue
+			}
+			// Skip disabled/removed entries without backing file
+			if auth.Disabled && strings.TrimSpace(auth.Attributes["path"]) == "" {
+				continue
+			}
+			authFileCount++
+		}
 	}
 
 	providerTotal := geminiCount + claudeCount + codexCount + vertexCount + openaiCount
