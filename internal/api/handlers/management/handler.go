@@ -222,6 +222,10 @@ func (h *Handler) Middleware() gin.HandlerFunc {
 		if provided == "" {
 			provided = c.GetHeader("X-Management-Key")
 		}
+		// Fallback: ?token= query param (needed for WebSocket — browsers can't set custom headers)
+		if provided == "" {
+			provided = c.Query("token")
+		}
 
 		if provided == "" {
 			if !localClient {
