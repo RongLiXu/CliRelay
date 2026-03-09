@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -26,6 +27,10 @@ import (
 //   - configPath: The path to the configuration file
 //   - localPassword: Optional password accepted for local management requests
 func StartService(cfg *config.Config, configPath string, localPassword string) {
+	dbPath := filepath.Join(filepath.Dir(configPath), "usage.db")
+	if err := usage.InitDB(dbPath); err != nil {
+		log.Errorf("usage: failed to initialize SQLite: %v", err)
+	}
 	usage.InitRedis(cfg.Redis)
 	defer usage.StopRedis()
 
@@ -62,6 +67,10 @@ func StartService(cfg *config.Config, configPath string, localPassword string) {
 // StartServiceBackground starts the proxy service in a background goroutine
 // and returns a cancel function for shutdown and a done channel.
 func StartServiceBackground(cfg *config.Config, configPath string, localPassword string) (cancel func(), done <-chan struct{}) {
+	dbPath := filepath.Join(filepath.Dir(configPath), "usage.db")
+	if err := usage.InitDB(dbPath); err != nil {
+		log.Errorf("usage: failed to initialize SQLite: %v", err)
+	}
 	usage.InitRedis(cfg.Redis)
 
 	builder := cliproxy.NewBuilder().

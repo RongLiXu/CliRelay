@@ -96,6 +96,16 @@ func InitRedis(cfg config.RedisConfig) {
 		log.Infof("Successfully loaded usage statistics from Redis")
 	}
 
+	// Migrate existing in-memory data to SQLite (first run only)
+	if defaultRequestStatistics != nil {
+		snapshot := defaultRequestStatistics.Snapshot()
+		if migrated, err := MigrateFromSnapshot(snapshot); err != nil {
+			log.Errorf("usage: migration from Redis snapshot failed: %v", err)
+		} else if migrated > 0 {
+			log.Infof("usage: migrated %d records from Redis to SQLite", migrated)
+		}
+	}
+
 	redisCtx, redisCancel = context.WithCancel(context.Background())
 	redisSyncWg.Add(1)
 	go redisSyncLoop()
@@ -112,6 +122,7 @@ func StopRedis() {
 		redisClient.Close()
 		log.Infof("Redis usage persistence flushed and closed")
 	}
+	CloseDB()
 }
 
 func redisSyncLoop() {
@@ -321,6 +332,10 @@ func (s *RequestStatistics) Record(ctx context.Context, record coreusage.Record)
 	s.requestsByHour[hourKey]++
 	s.tokensByDay[dayKey] += totalTokens
 	s.tokensByHour[hourKey] += totalTokens
+
+	// Write to SQLite (non-blocking, outside lock)
+	go InsertLog(statsKey, modelName, record.Source, record.ChannelName,
+		record.AuthIndex, failed, timestamp, record.LatencyMs, detail)
 }
 
 func (s *RequestStatistics) updateAPIStats(stats *apiStats, model string, detail RequestDetail) {
