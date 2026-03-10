@@ -168,7 +168,26 @@ Edit `config.yaml` to add your API keys or OAuth credentials.
 # Server starts at http://localhost:8317
 ```
 
-### 🐳 Docker
+### 🐳 Docker (Recommended)
+
+**One-Click Deploy** — run this on any Linux server (Debian / Ubuntu / CentOS / RHEL / Fedora):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kittors/CliRelay/main/install.sh | bash
+```
+
+The script will **automatically install Docker** if not present, walk you through interactive configuration, and start the service. After completion it outputs your server IP + port and a reverse-proxy setup guide.
+
+> 💡 If `curl` is not installed, install it first:
+> ```bash
+> # Debian / Ubuntu
+> apt-get update && apt-get install -y curl
+>
+> # CentOS / RHEL / Fedora
+> yum install -y curl
+> ```
+
+Or deploy manually with Docker Compose:
 
 ```bash
 docker compose up -d

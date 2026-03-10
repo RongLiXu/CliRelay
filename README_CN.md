@@ -168,7 +168,26 @@ cp config.example.yaml config.yaml
 # 服务启动在 http://localhost:8317
 ```
 
-### 🐳 Docker 部署
+### 🐳 Docker 部署（推荐）
+
+**一键部署** — 在任意 Linux 服务器上执行（兼容 Debian / Ubuntu / CentOS / RHEL / Fedora）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kittors/CliRelay/main/install.sh | bash
+```
+
+脚本会**自动安装 Docker**（如未安装），引导你完成交互式配置，并启动服务。部署完成后会输出服务器 IP + 端口，并提示配置反向代理。
+
+> 💡 如果系统没有 `curl` 命令，请先安装：
+> ```bash
+> # Debian / Ubuntu
+> apt-get update && apt-get install -y curl
+>
+> # CentOS / RHEL / Fedora
+> yum install -y curl
+> ```
+
+或使用 Docker Compose 手动部署：
 
 ```bash
 docker compose up -d
