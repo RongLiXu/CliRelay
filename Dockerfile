@@ -1,17 +1,13 @@
+# ── Frontend build ───────────────────────────────────────────────────────────
 FROM oven/bun:1 AS frontend-builder
 
 WORKDIR /frontend
-
-# Clone and build frontend
-RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
-ARG FRONTEND_REPO=https://github.com/kittors/codeProxy.git
-ARG FRONTEND_BRANCH=main
-RUN git clone --depth 1 --branch ${FRONTEND_BRANCH} ${FRONTEND_REPO} .
+COPY frontend/ .
 RUN bun install --frozen-lockfile
 RUN bunx vite build
 
 # ── Backend build ────────────────────────────────────────────────────────────
-FROM golang:1.24-alpine AS backend-builder
+FROM golang:1.26-alpine AS backend-builder
 
 WORKDIR /app
 
