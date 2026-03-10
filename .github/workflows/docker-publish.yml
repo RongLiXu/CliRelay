@@ -17,7 +17,15 @@ jobs:
       packages: write
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout backend
+        uses: actions/checkout@v4
+
+      - name: Checkout frontend
+        uses: actions/checkout@v4
+        with:
+          repository: kittors/codeProxy
+          path: frontend
+          ref: main
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
