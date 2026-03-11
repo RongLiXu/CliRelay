@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -90,9 +91,9 @@ func initAPIKeysTable(db *sql.DB) {
 
 // MigrateAPIKeysFromConfig moves API key entries from YAML config into SQLite.
 // It only migrates if the api_keys table is empty AND the config has entries.
-// After migration, it clears the in-memory config slices so they won't be
-// written back to YAML on the next persist.
-func MigrateAPIKeysFromConfig(cfg *config.Config) int {
+// After migration, it backs up config.yaml and re-saves it without the API key
+// fields so the YAML file stays clean.
+func MigrateAPIKeysFromConfig(cfg *config.Config, configFilePath string) int {
 	db := getDB()
 	if db == nil || cfg == nil {
 		return 0
@@ -206,6 +207,25 @@ func MigrateAPIKeysFromConfig(cfg *config.Config) int {
 	// Clear config slices so they won't be written back to YAML
 	cfg.APIKeys = nil
 	cfg.APIKeyEntries = nil
+
+	// Auto-persist the cleaned config to remove stale api-keys/api-key-entries from YAML
+	if configFilePath != "" {
+		// Backup first
+		backupPath := configFilePath + ".pre-sqlite-migration"
+		if data, err := os.ReadFile(configFilePath); err == nil {
+			if err := os.WriteFile(backupPath, data, 0644); err != nil {
+				log.Warnf("usage: failed to backup config before cleanup: %v", err)
+			} else {
+				log.Infof("usage: backed up config.yaml to %s", backupPath)
+			}
+		}
+		// Re-save config without api-keys/api-key-entries
+		if err := config.SaveConfigPreserveComments(configFilePath, cfg); err != nil {
+			log.Warnf("usage: failed to persist cleaned config: %v", err)
+		} else {
+			log.Infof("usage: cleaned api-keys/api-key-entries from config.yaml")
+		}
+	}
 
 	return imported
 }
