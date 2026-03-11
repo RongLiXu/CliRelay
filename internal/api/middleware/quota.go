@@ -145,6 +145,12 @@ func QuotaMiddleware() gin.HandlerFunc {
 			return
 		}
 
+		// ── Always record this request for system-wide RPM tracking ──
+		// This must happen before any metadata checks so ALL authenticated
+		// POST requests are counted for the dashboard RPM display.
+		rpmTracker := getRPMTracker(apiKey)
+		rpmTracker.add()
+
 		// Get access metadata containing limits
 		metadataVal, exists := c.Get("accessMetadata")
 		if !exists {
@@ -165,10 +171,6 @@ func QuotaMiddleware() gin.HandlerFunc {
 
 		// Cache limits for dashboard snapshot
 		UpdateKeyLimits(apiKey, rpmLimit, tpmLimit)
-
-		// ── Always record this request for system-wide RPM tracking ──
-		rpmTracker := getRPMTracker(apiKey)
-		rpmTracker.add()
 
 		// No limits configured — skip all checks
 		if dailyLimit <= 0 && totalQuota <= 0 && rpmLimit <= 0 && tpmLimit <= 0 {
