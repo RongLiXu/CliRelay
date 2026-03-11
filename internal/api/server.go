@@ -1318,33 +1318,52 @@ func SystemPromptMiddleware() gin.HandlerFunc {
 			return
 		}
 
+		log.Debugf("[SystemPrompt] POST request to %s", c.Request.URL.Path)
+
 		metadataVal, exists := c.Get("accessMetadata")
 		if !exists {
+			log.Debug("[SystemPrompt] no accessMetadata found, skipping")
 			c.Next()
 			return
 		}
 		metadata, ok := metadataVal.(map[string]string)
 		if !ok {
+			log.Debugf("[SystemPrompt] accessMetadata is not map[string]string, type=%T", metadataVal)
 			c.Next()
 			return
 		}
+
+		log.Debugf("[SystemPrompt] metadata keys: %v", func() []string {
+			keys := make([]string, 0, len(metadata))
+			for k := range metadata {
+				keys = append(keys, k)
+			}
+			return keys
+		}())
+
 		systemPrompt, exists := metadata["system-prompt"]
 		if !exists || strings.TrimSpace(systemPrompt) == "" {
+			log.Debug("[SystemPrompt] no system-prompt in metadata, skipping")
 			c.Next()
 			return
 		}
+
+		log.Debugf("[SystemPrompt] found system-prompt: %q", systemPrompt)
 
 		// Read body
 		bodyBytes, err := io.ReadAll(c.Request.Body)
 		if err != nil {
+			log.Debugf("[SystemPrompt] failed to read body: %v", err)
 			c.Next()
 			return
 		}
 
+		log.Debugf("[SystemPrompt] body length: %d bytes", len(bodyBytes))
+
 		// Parse as generic JSON
 		var body map[string]interface{}
 		if err := json.Unmarshal(bodyBytes, &body); err != nil {
-			// Not JSON — restore and pass through
+			log.Debugf("[SystemPrompt] body is not valid JSON: %v", err)
 			c.Request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 			c.Next()
 			return
@@ -1353,7 +1372,7 @@ func SystemPromptMiddleware() gin.HandlerFunc {
 		// Check for "messages" field (OpenAI / Claude format)
 		messagesRaw, hasMessages := body["messages"]
 		if !hasMessages {
-			// Not a chat-style request — restore and pass through
+			log.Debug("[SystemPrompt] no 'messages' field in body, skipping")
 			c.Request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 			c.Next()
 			return
@@ -1361,10 +1380,13 @@ func SystemPromptMiddleware() gin.HandlerFunc {
 
 		messages, ok := messagesRaw.([]interface{})
 		if !ok {
+			log.Debugf("[SystemPrompt] 'messages' is not an array, type=%T", messagesRaw)
 			c.Request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 			c.Next()
 			return
 		}
+
+		log.Debugf("[SystemPrompt] injecting system prompt into messages (original count: %d)", len(messages))
 
 		// Build the system message to inject
 		sysMsg := map[string]interface{}{
@@ -1381,12 +1403,13 @@ func SystemPromptMiddleware() gin.HandlerFunc {
 		// Re-serialize
 		newBody, err := json.Marshal(body)
 		if err != nil {
-			// Fallback: restore original body
+			log.Debugf("[SystemPrompt] failed to marshal new body: %v", err)
 			c.Request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 			c.Next()
 			return
 		}
 
+		log.Debugf("[SystemPrompt] ✅ successfully injected, new body length: %d bytes, new message count: %d", len(newBody), len(newMessages))
 		c.Request.Body = io.NopCloser(bytes.NewReader(newBody))
 		c.Request.ContentLength = int64(len(newBody))
 		c.Next()
