@@ -63,6 +63,7 @@ type LogStats struct {
 	Total       int64   `json:"total"`
 	SuccessRate float64 `json:"success_rate"`
 	TotalTokens int64   `json:"total_tokens"`
+	TotalCost   float64 `json:"total_cost"`
 }
 
 var (
@@ -354,9 +355,10 @@ func QueryStats(params LogQueryParams) (LogStats, error) {
 	where, args := buildWhereClause(params)
 
 	var total, successCount, totalTokens int64
-	statsSQL := "SELECT COUNT(*), COALESCE(SUM(CASE WHEN failed=0 THEN 1 ELSE 0 END),0), COALESCE(SUM(total_tokens),0) " +
+	var totalCost float64
+	statsSQL := "SELECT COUNT(*), COALESCE(SUM(CASE WHEN failed=0 THEN 1 ELSE 0 END),0), COALESCE(SUM(total_tokens),0), COALESCE(SUM(cost),0) " +
 		"FROM request_logs" + where
-	if err := db.QueryRow(statsSQL, args...).Scan(&total, &successCount, &totalTokens); err != nil {
+	if err := db.QueryRow(statsSQL, args...).Scan(&total, &successCount, &totalTokens, &totalCost); err != nil {
 		return LogStats{}, fmt.Errorf("usage: stats query: %w", err)
 	}
 
@@ -369,6 +371,7 @@ func QueryStats(params LogQueryParams) (LogStats, error) {
 		Total:       total,
 		SuccessRate: successRate,
 		TotalTokens: totalTokens,
+		TotalCost:   totalCost,
 	}, nil
 }
 
