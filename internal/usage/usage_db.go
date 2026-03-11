@@ -164,7 +164,7 @@ func InitDB(dbPath string) error {
 	log.Debugf("usage: running cost column migration")
 	migrateCostColumn(db)
 	log.Debugf("usage: initializing pricing table")
-	initPricingTable()
+	initPricingTable(db)
 	log.Infof("usage: SQLite database initialised at %s", dbPath)
 	return nil
 }

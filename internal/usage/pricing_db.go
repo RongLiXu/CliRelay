@@ -1,6 +1,7 @@
 package usage
 
 import (
+	"database/sql"
 	"fmt"
 	"sync"
 	"time"
@@ -34,8 +35,8 @@ var (
 )
 
 // initPricingTable creates the model_pricing table and loads the cache.
-func initPricingTable() {
-	db := getDB()
+// Accepts db directly to avoid deadlock when called from InitDB (which holds usageDBMu).
+func initPricingTable(db *sql.DB) {
 	if db == nil {
 		return
 	}
@@ -43,12 +44,12 @@ func initPricingTable() {
 		log.Errorf("usage: create model_pricing table: %v", err)
 		return
 	}
-	reloadPricingCache()
+	reloadPricingCache(db)
 }
 
 // reloadPricingCache loads all pricing rows into memory.
-func reloadPricingCache() {
-	db := getDB()
+// Accepts db directly to avoid deadlock when called from InitDB (which holds usageDBMu).
+func reloadPricingCache(db *sql.DB) {
 	if db == nil {
 		return
 	}
