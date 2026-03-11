@@ -86,6 +86,7 @@ func TestSanitizeConfigForAPI(t *testing.T) {
 				Models: []config.GeminiModel{
 					{Name: "gemini-3.1-flash", Alias: ""},
 				},
+				ExcludedModels: []string{"gemini-old-model"},
 			},
 		},
 		ClaudeKey: []config.ClaudeKey{
@@ -96,6 +97,7 @@ func TestSanitizeConfigForAPI(t *testing.T) {
 				Models: []config.ClaudeModel{
 					{Name: "glm-5", Alias: ""},
 				},
+				ExcludedModels: []string{"*"},
 			},
 		},
 		CodexKey: []config.CodexKey{
@@ -106,12 +108,16 @@ func TestSanitizeConfigForAPI(t *testing.T) {
 				Models: []config.CodexModel{
 					{Name: "gpt-5.4", Alias: ""},
 				},
+				ExcludedModels: []string{"gpt-old"},
 			},
 		},
 		OAuthModelAlias: map[string][]config.OAuthModelAlias{
 			"antigravity": {
 				{Name: "rev19-uic3-1p", Alias: "gemini-2.5-computer-use-preview"},
 			},
+		},
+		OAuthExcludedModels: map[string][]string{
+			"anthropic": {"claude-old-model"},
 		},
 		AmpCode: config.AmpCode{
 			UpstreamURL:    "https://amp.example.com/api",
@@ -183,6 +189,28 @@ func TestSanitizeConfigForAPI(t *testing.T) {
 	// ── Verify OAuthModelAlias is stripped ──
 	if sanitized.OAuthModelAlias != nil {
 		t.Error("OAuthModelAlias not cleared")
+	}
+
+	// ── Verify OAuthExcludedModels is stripped ──
+	if sanitized.OAuthExcludedModels != nil {
+		t.Error("OAuthExcludedModels not cleared")
+	}
+
+	// ── Verify Provider ExcludedModels are stripped ──
+	for _, g := range sanitized.GeminiKey {
+		if g.ExcludedModels != nil {
+			t.Error("GeminiKey: excluded-models not cleared")
+		}
+	}
+	for _, c := range sanitized.ClaudeKey {
+		if c.ExcludedModels != nil {
+			t.Error("ClaudeKey: excluded-models not cleared")
+		}
+	}
+	for _, c := range sanitized.CodexKey {
+		if c.ExcludedModels != nil {
+			t.Error("CodexKey: excluded-models not cleared")
+		}
 	}
 
 	// ── Verify Redis addr is masked ──

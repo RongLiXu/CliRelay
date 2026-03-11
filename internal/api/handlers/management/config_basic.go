@@ -110,6 +110,7 @@ func sanitizeConfigForAPI(cfg *config.Config) *config.Config {
 		copy.GeminiKey[i].BaseURL = maskBaseURL(copy.GeminiKey[i].BaseURL)
 		copy.GeminiKey[i].ProxyURL = maskBaseURL(copy.GeminiKey[i].ProxyURL)
 		copy.GeminiKey[i].Models = nil
+		copy.GeminiKey[i].ExcludedModels = nil
 	}
 
 	// Mask Claude API keys, names, URLs, and models
@@ -119,6 +120,7 @@ func sanitizeConfigForAPI(cfg *config.Config) *config.Config {
 		copy.ClaudeKey[i].BaseURL = maskBaseURL(copy.ClaudeKey[i].BaseURL)
 		copy.ClaudeKey[i].ProxyURL = maskBaseURL(copy.ClaudeKey[i].ProxyURL)
 		copy.ClaudeKey[i].Models = nil
+		copy.ClaudeKey[i].ExcludedModels = nil
 	}
 
 	// Mask Codex API keys, names, URLs, and models
@@ -128,6 +130,7 @@ func sanitizeConfigForAPI(cfg *config.Config) *config.Config {
 		copy.CodexKey[i].BaseURL = maskBaseURL(copy.CodexKey[i].BaseURL)
 		copy.CodexKey[i].ProxyURL = maskBaseURL(copy.CodexKey[i].ProxyURL)
 		copy.CodexKey[i].Models = nil
+		copy.CodexKey[i].ExcludedModels = nil
 	}
 
 	// Mask OpenAI compatibility API keys, names, URLs, and models
@@ -168,8 +171,9 @@ func sanitizeConfigForAPI(cfg *config.Config) *config.Config {
 		copy.APIKeyEntries[i].Name = maskName(copy.APIKeyEntries[i].Name)
 	}
 
-	// ── OAuth model alias (internal mapping, no reason to expose) ────────
+	// ── OAuth model alias & excluded models (internal mapping, no reason to expose) ──
 	copy.OAuthModelAlias = nil
+	copy.OAuthExcludedModels = nil
 
 	// ── Global proxy URL ────────────────────────────────────────────────────
 	copy.ProxyURL = maskBaseURL(copy.ProxyURL)
