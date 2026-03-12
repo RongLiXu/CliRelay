@@ -198,6 +198,8 @@ func (m logsTabModel) renderLogs() string {
 	filterLabel := "ALL"
 	if m.filter != "" {
 		filterLabel = strings.ToUpper(m.filter) + "+"
+	} else {
+		filterLabel = T("logs_filter_all")
 	}
 
 	header := fmt.Sprintf(" %s  %s  %s: %s  %s: %d",
@@ -210,7 +212,7 @@ func (m logsTabModel) renderLogs() string {
 	sb.WriteString("\n")
 
 	if m.lastErr != nil {
-		sb.WriteString(errorStyle.Render("⚠ Error: " + m.lastErr.Error()))
+		sb.WriteString(errorStyle.Render(T("error_prefix") + m.lastErr.Error()))
 		sb.WriteString("\n")
 	}
 

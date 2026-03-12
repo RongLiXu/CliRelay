@@ -73,7 +73,7 @@ func (m dashboardModel) Update(msg tea.Msg) (dashboardModel, tea.Cmd) {
 	case dashboardDataMsg:
 		if msg.err != nil {
 			m.err = msg.err
-			m.content = errorStyle.Render("⚠ Error: " + msg.err.Error())
+			m.content = errorStyle.Render(T("error_prefix") + msg.err.Error())
 		} else {
 			m.err = nil
 			// Cache data for locale switching

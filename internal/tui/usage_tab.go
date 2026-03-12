@@ -99,7 +99,7 @@ func (m usageTabModel) renderContent() string {
 	sb.WriteString("\n\n")
 
 	if m.err != nil {
-		sb.WriteString(errorStyle.Render("⚠ Error: " + m.err.Error()))
+		sb.WriteString(errorStyle.Render(T("error_prefix") + m.err.Error()))
 		sb.WriteString("\n")
 		return sb.String()
 	}
@@ -221,7 +221,7 @@ func (m usageTabModel) renderContent() string {
 		sb.WriteString(strings.Repeat("─", minInt(m.width, 80)))
 		sb.WriteString("\n")
 
-		header := fmt.Sprintf("  %-30s %10s %12s", "API", T("requests"), T("tokens"))
+		header := fmt.Sprintf("  %-30s %10s %12s", T("usage_api"), T("requests"), T("tokens"))
 		sb.WriteString(tableHeaderStyle.Render(header))
 		sb.WriteString("\n")
 
