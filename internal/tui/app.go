@@ -499,6 +499,7 @@ func Run(port int, secretKey string, hook *LogHook, output io.Writer) error {
 	if output == nil {
 		output = os.Stdout
 	}
+	InitLocaleFromEnv()
 	app := NewApp(port, secretKey, hook)
 	p := tea.NewProgram(app, tea.WithAltScreen(), tea.WithOutput(output))
 	_, err := p.Run()

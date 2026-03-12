@@ -1,5 +1,10 @@
 package tui
 
+import (
+	"os"
+	"strings"
+)
+
 // i18n provides a simple internationalization system for the TUI.
 // Supported locales: "zh" (Chinese, default), "en" (English).
 
@@ -7,8 +12,8 @@ var currentLocale = "zh"
 
 // SetLocale changes the active locale.
 func SetLocale(locale string) {
-	if _, ok := locales[locale]; ok {
-		currentLocale = locale
+	if normalized := normalizeLocale(locale); normalized != "" {
+		currentLocale = normalized
 	}
 }
 
@@ -23,6 +28,37 @@ func ToggleLocale() {
 		currentLocale = "en"
 	} else {
 		currentLocale = "zh"
+	}
+}
+
+// InitLocaleFromEnv applies the preferred locale from environment variables.
+func InitLocaleFromEnv() {
+	if locale := LocaleFromEnv(); locale != "" {
+		currentLocale = locale
+	}
+}
+
+// LocaleFromEnv resolves the preferred locale from the current environment.
+func LocaleFromEnv() string {
+	for _, key := range []string{"CLIRELAY_LOCALE", "TUI_LOCALE", "LANGUAGE", "LC_ALL", "LC_MESSAGES", "LANG"} {
+		if locale := normalizeLocale(os.Getenv(key)); locale != "" {
+			return locale
+		}
+	}
+	return ""
+}
+
+func normalizeLocale(locale string) string {
+	normalized := strings.ToLower(strings.TrimSpace(locale))
+	switch {
+	case normalized == "":
+		return ""
+	case strings.HasPrefix(normalized, "zh"):
+		return "zh"
+	case strings.HasPrefix(normalized, "en"):
+		return "en"
+	default:
+		return ""
 	}
 }
 
