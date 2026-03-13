@@ -71,6 +71,7 @@ var (
 	usageDB     *sql.DB
 	usageDBMu   sync.Mutex
 	usageDBPath string
+	usageLoc    *time.Location
 )
 
 const createTableSQL = `
@@ -135,13 +136,18 @@ func migrateCostColumn(db *sql.DB) {
 
 // InitDB opens (or creates) the SQLite database at the given path and creates
 // the request_logs table if it doesn't exist.
-func InitDB(dbPath string, storageCfg config.RequestLogStorageConfig) error {
+func InitDB(dbPath string, storageCfg config.RequestLogStorageConfig, loc *time.Location) error {
 	usageDBMu.Lock()
 	defer usageDBMu.Unlock()
 
 	if usageDB != nil {
 		return nil // already initialised
 	}
+
+	if loc == nil {
+		loc = time.Local
+	}
+	usageLoc = loc
 
 	log.Debugf("usage: opening SQLite database at %s", dbPath)
 	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
@@ -192,6 +198,7 @@ func CloseDB() {
 	if usageDB != nil {
 		_ = usageDB.Close()
 		usageDB = nil
+		usageLoc = nil
 		log.Info("usage: SQLite database closed")
 	}
 }
@@ -357,9 +364,7 @@ func QueryFilters(days int) (FilterOptions, error) {
 		days = 7
 	}
 
-	now := time.Now().UTC()
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-	cutoff := today.AddDate(0, 0, -(days - 1)).Format(time.RFC3339)
+	cutoff := cutoffStartUTC(days).Format(time.RFC3339)
 
 	keys, err := queryDistinct(db, "api_key", cutoff)
 	if err != nil {
@@ -481,16 +486,36 @@ func getDB() *sql.DB {
 	return usageDB
 }
 
+func getUsageLocation() *time.Location {
+	usageDBMu.Lock()
+	defer usageDBMu.Unlock()
+	if usageLoc == nil {
+		return time.Local
+	}
+	return usageLoc
+}
+
+func cutoffStartUTCAt(now time.Time, days int) time.Time {
+	if days < 1 {
+		days = 7
+	}
+	loc := getUsageLocation()
+	now = now.In(loc)
+	todayStartLocal := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
+	return todayStartLocal.AddDate(0, 0, -(days - 1)).UTC()
+}
+
+func cutoffStartUTC(days int) time.Time {
+	return cutoffStartUTCAt(time.Now(), days)
+}
+
 func buildWhereClause(params LogQueryParams) (string, []interface{}) {
 	conditions := make([]string, 0, 4)
 	args := make([]interface{}, 0, 4)
 
 	// Time range: days=1 means "today", days=7 means "last 7 days", etc.
-	now := time.Now().UTC()
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-	cutoff := today.AddDate(0, 0, -(params.Days - 1))
 	conditions = append(conditions, "timestamp >= ?")
-	args = append(args, cutoff.Format(time.RFC3339))
+	args = append(args, cutoffStartUTC(params.Days).Format(time.RFC3339))
 
 	if params.APIKey != "" {
 		conditions = append(conditions, "api_key = ?")
@@ -542,9 +567,7 @@ func QueryModelsForKey(apiKey string, days int) ([]string, error) {
 	if days < 1 {
 		days = 7
 	}
-	now := time.Now().UTC()
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-	cutoff := today.AddDate(0, 0, -(days - 1)).Format(time.RFC3339)
+	cutoff := cutoffStartUTC(days).Format(time.RFC3339)
 
 	rows, err := db.Query(
 		"SELECT DISTINCT model FROM request_logs WHERE api_key = ? AND timestamp >= ? AND model != '' ORDER BY model",
@@ -661,7 +684,9 @@ func QueryDailySeries(apiKey string, days int) ([]DailySeriesPoint, error) {
 	params := LogQueryParams{APIKey: apiKey, Days: days}
 	where, args := buildWhereClause(params)
 
-	q := `SELECT date(timestamp) as d,
+	// NOTE: timestamps are stored as UTC RFC3339 strings; localtime converts them to the process timezone
+	// (configured via TZ/time.Local) for correct day bucketing.
+	q := `SELECT date(timestamp, 'localtime') as d,
 	             COUNT(*) as reqs,
 	             COALESCE(SUM(input_tokens),0),
 	             COALESCE(SUM(output_tokens),0)
@@ -775,7 +800,7 @@ func GetChannelAvgLatency(days int) ([]ChannelLatency, error) {
 		return nil, fmt.Errorf("usage: database not initialised")
 	}
 
-	cutoff := time.Now().AddDate(0, 0, -days)
+	cutoff := time.Now().UTC().AddDate(0, 0, -days)
 	rows, err := db.Query(`
 		SELECT source, COUNT(*) as cnt, AVG(latency_ms) as avg_lat
 		FROM request_logs
@@ -800,18 +825,16 @@ func GetChannelAvgLatency(days int) ([]ChannelLatency, error) {
 	return result, rows.Err()
 }
 
-// CountTodayByKey returns the number of requests made by the given API key today (UTC).
+// CountTodayByKey returns the number of requests made by the given API key today (project timezone).
 func CountTodayByKey(apiKey string) (int64, error) {
 	db := getDB()
 	if db == nil {
 		return 0, nil
 	}
-	now := time.Now().UTC()
-	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 	var count int64
 	err := db.QueryRow(
 		"SELECT COUNT(*) FROM request_logs WHERE api_key = ? AND timestamp >= ?",
-		apiKey, todayStart.Format(time.RFC3339),
+		apiKey, cutoffStartUTC(1).Format(time.RFC3339),
 	).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("usage: count today: %w", err)

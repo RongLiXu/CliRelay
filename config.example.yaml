@@ -17,6 +17,10 @@ oauth-clients:
 # Server port
 port: 8317
 
+# Project timezone (IANA name). Affects "today" boundaries and day-based aggregation in monitoring/usage pages.
+# Examples: "Asia/Shanghai", "UTC", "America/Los_Angeles"
+timezone: ""
+
 # Redis settings for usage statistics persistence
 redis:
   enable: false

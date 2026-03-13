@@ -32,6 +32,11 @@ type Config struct {
 	// Port is the network port on which the API server will listen.
 	Port int `yaml:"port" json:"-"`
 
+	// Timezone configures the project's timezone (IANA name, e.g. "Asia/Shanghai").
+	// It affects "today" boundaries and day-based aggregation in monitoring/usage pages.
+	// When empty, the process local timezone (time.Local) is used.
+	Timezone string `yaml:"timezone,omitempty" json:"timezone,omitempty"`
+
 	// Redis config controls the Redis connection for usage persistence.
 	Redis RedisConfig `yaml:"redis" json:"redis"`
 

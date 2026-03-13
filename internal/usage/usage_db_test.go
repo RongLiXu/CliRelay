@@ -22,11 +22,36 @@ func initTestUsageDB(t *testing.T, cfg config.RequestLogStorageConfig) {
 	t.Helper()
 	CloseDB()
 	dbPath := filepath.Join(t.TempDir(), "usage.db")
-	if err := InitDB(dbPath, cfg); err != nil {
+	if err := InitDB(dbPath, cfg, time.UTC); err != nil {
 		t.Fatalf("InitDB() error = %v", err)
 	}
 	stopRequestLogMaintenance()
 	t.Cleanup(CloseDB)
+}
+
+func TestCutoffStartUTCAtUsesProjectTimezoneForDayBoundaries(t *testing.T) {
+	CloseDB()
+	dbPath := filepath.Join(t.TempDir(), "usage.db")
+	loc := time.FixedZone("UTC+8", 8*3600)
+	if err := InitDB(dbPath, config.RequestLogStorageConfig{StoreContent: false}, loc); err != nil {
+		t.Fatalf("InitDB() error = %v", err)
+	}
+	stopRequestLogMaintenance()
+	t.Cleanup(CloseDB)
+
+	nowUTC := time.Date(2026, 3, 12, 1, 0, 0, 0, time.UTC) // 09:00 at UTC+8 (local date: 2026-03-12)
+
+	got := cutoffStartUTCAt(nowUTC, 1)
+	want := time.Date(2026, 3, 11, 16, 0, 0, 0, time.UTC) // local 2026-03-12 00:00 at UTC+8
+	if !got.Equal(want) {
+		t.Fatalf("cutoffStartUTCAt(days=1) = %s, want %s", got.Format(time.RFC3339), want.Format(time.RFC3339))
+	}
+
+	got = cutoffStartUTCAt(nowUTC, 2)
+	want = time.Date(2026, 3, 10, 16, 0, 0, 0, time.UTC) // local 2026-03-11 00:00 at UTC+8
+	if !got.Equal(want) {
+		t.Fatalf("cutoffStartUTCAt(days=2) = %s, want %s", got.Format(time.RFC3339), want.Format(time.RFC3339))
+	}
 }
 
 func TestInsertLogStoresCompressedContentOutsideMainTable(t *testing.T) {
