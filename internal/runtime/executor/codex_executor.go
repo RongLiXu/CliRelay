@@ -147,6 +147,7 @@ func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
 	httpResp, err := httpClient.Do(httpReq)
 	if err != nil {
 		recordAPIResponseError(ctx, e.cfg, err)
+		reporter.publishFailureWithContent(ctx, string(req.Payload), err.Error())
 		return resp, err
 	}
 	defer func() {
@@ -252,6 +253,7 @@ func (e *CodexExecutor) executeCompact(ctx context.Context, auth *cliproxyauth.A
 	httpResp, err := httpClient.Do(httpReq)
 	if err != nil {
 		recordAPIResponseError(ctx, e.cfg, err)
+		reporter.publishFailureWithContent(ctx, string(req.Payload), err.Error())
 		return resp, err
 	}
 	defer func() {
@@ -350,6 +352,7 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 	httpResp, err := httpClient.Do(httpReq)
 	if err != nil {
 		recordAPIResponseError(ctx, e.cfg, err)
+		reporter.publishFailureWithContent(ctx, string(req.Payload), err.Error())
 		return nil, err
 	}
 	recordAPIResponseMetadata(ctx, e.cfg, httpResp.StatusCode, httpResp.Header.Clone())

@@ -138,6 +138,7 @@ func (e *IFlowExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
 	httpResp, err := httpClient.Do(httpReq)
 	if err != nil {
 		recordAPIResponseError(ctx, e.cfg, err)
+		reporter.publishFailureWithContent(ctx, string(req.Payload), err.Error())
 		return resp, err
 	}
 	defer func() {
@@ -247,6 +248,7 @@ func (e *IFlowExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 	httpResp, err := httpClient.Do(httpReq)
 	if err != nil {
 		recordAPIResponseError(ctx, e.cfg, err)
+		reporter.publishFailureWithContent(ctx, string(req.Payload), err.Error())
 		return nil, err
 	}
 
