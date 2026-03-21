@@ -46,8 +46,10 @@ func (h *Handler) GetUsageLogs(c *gin.Context) {
 	// Enrich log items with resolved names
 	for i := range result.Items {
 		item := &result.Items[i]
-		if name, ok := keyNameMap[item.APIKey]; ok {
-			item.APIKeyName = name
+		if item.APIKeyName == "" {
+			if name, ok := keyNameMap[item.APIKey]; ok {
+				item.APIKeyName = name
+			}
 		}
 		// Fill in channel_name from config if not already set in the log
 		if item.ChannelName == "" {
@@ -331,11 +333,14 @@ func (h *Handler) GetUsageChartData(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-		// Enrich with display names from config
+		// Fallback: for older logs where api_key_name was not yet stored,
+		// enrich with display names from the current config.
 		keyNameMap, _ := h.buildNameMaps()
 		for i := range apikeyDist {
-			if name, ok := keyNameMap[apikeyDist[i].APIKey]; ok {
-				apikeyDist[i].Name = name
+			if apikeyDist[i].Name == "" {
+				if name, ok := keyNameMap[apikeyDist[i].APIKey]; ok {
+					apikeyDist[i].Name = name
+				}
 			}
 		}
 	}

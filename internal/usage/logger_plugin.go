@@ -339,7 +339,14 @@ func (s *RequestStatistics) Record(ctx context.Context, record coreusage.Record)
 
 	// Persist request logs in the usage manager worker so SQLite writes stay
 	// serialized and do not spawn one goroutine per request.
-	InsertLog(statsKey, modelName, record.Source, record.ChannelName,
+	// Look up the display name for this API key so it's persisted in the log.
+	apiKeyName := ""
+	if statsKey != "" {
+		if row := GetAPIKey(statsKey); row != nil && row.Name != "" {
+			apiKeyName = row.Name
+		}
+	}
+	InsertLog(statsKey, apiKeyName, modelName, record.Source, record.ChannelName,
 		record.AuthIndex, failed, timestamp, record.LatencyMs, detail,
 		record.InputContent, record.OutputContent)
 }

@@ -134,6 +134,18 @@ func migrateCostColumn(db *sql.DB) {
 	}
 }
 
+// migrateApiKeyNameColumn adds api_key_name column to an existing request_logs table.
+// This stores the display name of the API key at the time of the request, so that
+// the name is preserved even if the key is later deleted.
+func migrateApiKeyNameColumn(db *sql.DB) {
+	_, err := db.Exec("ALTER TABLE request_logs ADD COLUMN api_key_name TEXT NOT NULL DEFAULT ''")
+	if err != nil {
+		if !strings.Contains(err.Error(), "duplicate") {
+			log.Warnf("usage: migrate column api_key_name: %v", err)
+		}
+	}
+}
+
 // InitDB opens (or creates) the SQLite database at the given path and creates
 // the request_logs table if it doesn't exist.
 func InitDB(dbPath string, storageCfg config.RequestLogStorageConfig, loc *time.Location) error {
@@ -195,6 +207,8 @@ func InitDB(dbPath string, storageCfg config.RequestLogStorageConfig, loc *time.
 	migrateContentColumns(db)
 	log.Debugf("usage: running cost column migration")
 	migrateCostColumn(db)
+	log.Debugf("usage: running api_key_name column migration")
+	migrateApiKeyNameColumn(db)
 	log.Debugf("usage: initializing pricing table")
 	initPricingTable(db)
 	log.Debugf("usage: initializing api_keys table")
@@ -220,7 +234,7 @@ func CloseDB() {
 
 // InsertLog writes a single request log entry into the SQLite database.
 // It is safe to call concurrently.
-func InsertLog(apiKey, model, source, channelName, authIndex string,
+func InsertLog(apiKey, apiKeyName, model, source, channelName, authIndex string,
 	failed bool, timestamp time.Time, latencyMs int64, tokens TokenStats,
 	inputContent, outputContent string) {
 
@@ -245,11 +259,11 @@ func InsertLog(apiKey, model, source, channelName, authIndex string,
 
 	result, err := tx.Exec(
 		`INSERT INTO request_logs
-			(timestamp, api_key, model, source, channel_name, auth_index,
+			(timestamp, api_key, api_key_name, model, source, channel_name, auth_index,
 			 failed, latency_ms, input_tokens, output_tokens, reasoning_tokens, cached_tokens, total_tokens, cost)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		timestamp.UTC().Format(time.RFC3339Nano),
-		apiKey, model, source, channelName, authIndex,
+		apiKey, apiKeyName, model, source, channelName, authIndex,
 		failedInt, latencyMs,
 		tokens.InputTokens, tokens.OutputTokens, tokens.ReasoningTokens,
 		tokens.CachedTokens, tokens.TotalTokens, cost,
@@ -327,7 +341,7 @@ func QueryLogs(params LogQueryParams) (LogQueryResult, error) {
 
 	// Fetch page
 	offset := (params.Page - 1) * params.Size
-	querySQL := "SELECT id, timestamp, api_key, model, source, channel_name, auth_index, " +
+	querySQL := "SELECT id, timestamp, api_key, api_key_name, model, source, channel_name, auth_index, " +
 		"failed, latency_ms, input_tokens, output_tokens, reasoning_tokens, cached_tokens, total_tokens, " +
 		"cost, " +
 		"(CASE WHEN EXISTS (SELECT 1 FROM request_log_content content WHERE content.log_id = request_logs.id) " +
@@ -348,7 +362,7 @@ func QueryLogs(params LogQueryParams) (LogQueryResult, error) {
 		var ts string
 		var failedInt, hasContentInt int
 		if err := rows.Scan(
-			&row.ID, &ts, &row.APIKey, &row.Model, &row.Source, &row.ChannelName,
+			&row.ID, &ts, &row.APIKey, &row.APIKeyName, &row.Model, &row.Source, &row.ChannelName,
 			&row.AuthIndex, &failedInt, &row.LatencyMs,
 			&row.InputTokens, &row.OutputTokens, &row.ReasoningTokens,
 			&row.CachedTokens, &row.TotalTokens, &row.Cost, &hasContentInt,
@@ -822,6 +836,7 @@ func QueryAPIKeyDistribution(days int) ([]APIKeyDistributionPoint, error) {
 	where, args := buildWhereClause(params)
 
 	q := `SELECT api_key,
+	             COALESCE(NULLIF(MAX(api_key_name),''), '') as name,
 	             COUNT(*) as reqs,
 	             COALESCE(SUM(total_tokens),0)
 	      FROM request_logs` + where + `
@@ -837,7 +852,7 @@ func QueryAPIKeyDistribution(days int) ([]APIKeyDistributionPoint, error) {
 	var result []APIKeyDistributionPoint
 	for rows.Next() {
 		var p APIKeyDistributionPoint
-		if err := rows.Scan(&p.APIKey, &p.Requests, &p.Tokens); err != nil {
+		if err := rows.Scan(&p.APIKey, &p.Name, &p.Requests, &p.Tokens); err != nil {
 			return nil, fmt.Errorf("usage: apikey distribution scan: %w", err)
 		}
 		result = append(result, p)

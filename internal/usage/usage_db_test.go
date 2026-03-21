@@ -65,7 +65,7 @@ func TestInsertLogStoresCompressedContentOutsideMainTable(t *testing.T) {
 	input := `{"messages":[{"role":"user","content":"hello world"}]}`
 	output := `{"id":"resp_123","output":"done"}`
 
-	InsertLog("sk-test", "gpt-test", "source", "channel", "auth-1", false, timestamp, 123, TokenStats{
+	InsertLog("sk-test", "", "gpt-test", "source", "channel", "auth-1", false, timestamp, 123, TokenStats{
 		InputTokens:  10,
 		OutputTokens: 20,
 		TotalTokens:  30,
@@ -246,7 +246,7 @@ func TestGetRequestLogStorageBytesCountsCompressedAndLegacyContent(t *testing.T)
 	input := `{"messages":[{"role":"user","content":"hello world"}]}`
 	output := `{"id":"resp_123","output":"done"}`
 
-	InsertLog("sk-test", "gpt-test", "source", "channel", "auth-1", false, timestamp, 123, TokenStats{
+	InsertLog("sk-test", "", "gpt-test", "source", "channel", "auth-1", false, timestamp, 123, TokenStats{
 		InputTokens:  10,
 		OutputTokens: 20,
 		TotalTokens:  30,
@@ -653,13 +653,13 @@ func TestDeleteLogsByAPIKeyRemovesLogsAndContent(t *testing.T) {
 	output := `{"id":"resp_1","output":"done"}`
 
 	// Insert 3 logs: 2 for "sk-target", 1 for "sk-other"
-	InsertLog("sk-target", "gpt-test", "source", "channel", "auth-1", false, timestamp, 100, TokenStats{
+	InsertLog("sk-target", "", "gpt-test", "source", "channel", "auth-1", false, timestamp, 100, TokenStats{
 		InputTokens: 10, OutputTokens: 20, TotalTokens: 30,
 	}, input, output)
-	InsertLog("sk-target", "gpt-test", "source", "channel", "auth-1", false, timestamp, 200, TokenStats{
+	InsertLog("sk-target", "", "gpt-test", "source", "channel", "auth-1", false, timestamp, 200, TokenStats{
 		InputTokens: 15, OutputTokens: 25, TotalTokens: 40,
 	}, input, output)
-	InsertLog("sk-other", "gpt-test", "source", "channel", "auth-2", false, timestamp, 300, TokenStats{
+	InsertLog("sk-other", "", "gpt-test", "source", "channel", "auth-2", false, timestamp, 300, TokenStats{
 		InputTokens: 5, OutputTokens: 10, TotalTokens: 15,
 	}, input, output)
 
