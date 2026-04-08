@@ -1,6 +1,7 @@
 package usage
 
 import (
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -54,6 +55,74 @@ func TestCutoffStartUTCAtUsesProjectTimezoneForDayBoundaries(t *testing.T) {
 	}
 }
 
+func TestInitDBMigratesFirstTokenColumn(t *testing.T) {
+	CloseDB()
+	dbPath := filepath.Join(t.TempDir(), "usage.db")
+
+	legacyDB, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open legacy db: %v", err)
+	}
+	if _, err := legacyDB.Exec(`
+		CREATE TABLE request_logs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			timestamp DATETIME NOT NULL,
+			api_key TEXT NOT NULL DEFAULT '',
+			api_key_name TEXT NOT NULL DEFAULT '',
+			model TEXT NOT NULL DEFAULT '',
+			source TEXT NOT NULL DEFAULT '',
+			channel_name TEXT NOT NULL DEFAULT '',
+			auth_index TEXT NOT NULL DEFAULT '',
+			failed INTEGER NOT NULL DEFAULT 0,
+			latency_ms INTEGER NOT NULL DEFAULT 0,
+			input_tokens INTEGER NOT NULL DEFAULT 0,
+			output_tokens INTEGER NOT NULL DEFAULT 0,
+			reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+			cached_tokens INTEGER NOT NULL DEFAULT 0,
+			total_tokens INTEGER NOT NULL DEFAULT 0,
+			cost REAL NOT NULL DEFAULT 0,
+			input_content TEXT NOT NULL DEFAULT '',
+			output_content TEXT NOT NULL DEFAULT ''
+		);
+	`); err != nil {
+		t.Fatalf("create legacy request_logs table: %v", err)
+	}
+	if err := legacyDB.Close(); err != nil {
+		t.Fatalf("close legacy db: %v", err)
+	}
+
+	if err := InitDB(dbPath, config.RequestLogStorageConfig{}, time.UTC); err != nil {
+		t.Fatalf("InitDB() error = %v", err)
+	}
+	stopRequestLogMaintenance()
+	t.Cleanup(CloseDB)
+
+	db := getDB()
+	var found bool
+	rows, err := db.Query("PRAGMA table_info(request_logs)")
+	if err != nil {
+		t.Fatalf("PRAGMA table_info(request_logs): %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, dataType string
+		var notNull int
+		var defaultValue any
+		var pk int
+		if err := rows.Scan(&cid, &name, &dataType, &notNull, &defaultValue, &pk); err != nil {
+			t.Fatalf("scan table info: %v", err)
+		}
+		if name == "first_token_ms" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected first_token_ms column to exist after InitDB migration")
+	}
+}
+
 func TestInsertLogStoresCompressedContentOutsideMainTable(t *testing.T) {
 	initTestUsageDB(t, config.RequestLogStorageConfig{
 		StoreContent:           true,
@@ -65,7 +134,7 @@ func TestInsertLogStoresCompressedContentOutsideMainTable(t *testing.T) {
 	input := `{"messages":[{"role":"user","content":"hello world"}]}`
 	output := `{"id":"resp_123","output":"done"}`
 
-	InsertLog("sk-test", "", "gpt-test", "source", "channel", "auth-1", false, timestamp, 123, TokenStats{
+	InsertLog("sk-test", "", "gpt-test", "source", "channel", "auth-1", false, timestamp, 123, 45, TokenStats{
 		InputTokens:  10,
 		OutputTokens: 20,
 		TotalTokens:  30,
@@ -77,6 +146,9 @@ func TestInsertLogStoresCompressedContentOutsideMainTable(t *testing.T) {
 	}
 	if len(result.Items) != 1 {
 		t.Fatalf("expected 1 log row, got %d", len(result.Items))
+	}
+	if result.Items[0].FirstTokenMs != 45 {
+		t.Fatalf("FirstTokenMs = %d, want %d", result.Items[0].FirstTokenMs, 45)
 	}
 	if !result.Items[0].HasContent {
 		t.Fatalf("expected HasContent to be true")
@@ -246,7 +318,7 @@ func TestGetRequestLogStorageBytesCountsCompressedAndLegacyContent(t *testing.T)
 	input := `{"messages":[{"role":"user","content":"hello world"}]}`
 	output := `{"id":"resp_123","output":"done"}`
 
-	InsertLog("sk-test", "", "gpt-test", "source", "channel", "auth-1", false, timestamp, 123, TokenStats{
+	InsertLog("sk-test", "", "gpt-test", "source", "channel", "auth-1", false, timestamp, 123, 33, TokenStats{
 		InputTokens:  10,
 		OutputTokens: 20,
 		TotalTokens:  30,
@@ -653,13 +725,13 @@ func TestDeleteLogsByAPIKeyRemovesLogsAndContent(t *testing.T) {
 	output := `{"id":"resp_1","output":"done"}`
 
 	// Insert 3 logs: 2 for "sk-target", 1 for "sk-other"
-	InsertLog("sk-target", "", "gpt-test", "source", "channel", "auth-1", false, timestamp, 100, TokenStats{
+	InsertLog("sk-target", "", "gpt-test", "source", "channel", "auth-1", false, timestamp, 100, 10, TokenStats{
 		InputTokens: 10, OutputTokens: 20, TotalTokens: 30,
 	}, input, output)
-	InsertLog("sk-target", "", "gpt-test", "source", "channel", "auth-1", false, timestamp, 200, TokenStats{
+	InsertLog("sk-target", "", "gpt-test", "source", "channel", "auth-1", false, timestamp, 200, 20, TokenStats{
 		InputTokens: 15, OutputTokens: 25, TotalTokens: 40,
 	}, input, output)
-	InsertLog("sk-other", "", "gpt-test", "source", "channel", "auth-2", false, timestamp, 300, TokenStats{
+	InsertLog("sk-other", "", "gpt-test", "source", "channel", "auth-2", false, timestamp, 300, 30, TokenStats{
 		InputTokens: 5, OutputTokens: 10, TotalTokens: 15,
 	}, input, output)
 

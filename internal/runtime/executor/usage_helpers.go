@@ -155,6 +155,7 @@ func (r *usageReporter) publishWithOutcome(ctx context.Context, detail usage.Det
 		if latencyMs < 0 {
 			latencyMs = 0
 		}
+		firstTokenMs := firstTokenLatencyMsFromContext(ctx, r.requestedAt)
 		usage.PublishRecord(ctx, usage.Record{
 			Provider:      r.provider,
 			Model:         r.model,
@@ -165,6 +166,7 @@ func (r *usageReporter) publishWithOutcome(ctx context.Context, detail usage.Det
 			AuthIndex:     r.authIndex,
 			RequestedAt:   r.requestedAt,
 			LatencyMs:     latencyMs,
+			FirstTokenMs:  firstTokenMs,
 			Failed:        failed,
 			Detail:        detail,
 			InputContent:  inputContent,
@@ -187,6 +189,7 @@ func (r *usageReporter) ensurePublished(ctx context.Context) {
 		if latencyMs < 0 {
 			latencyMs = 0
 		}
+		firstTokenMs := firstTokenLatencyMsFromContext(ctx, r.requestedAt)
 		usage.PublishRecord(ctx, usage.Record{
 			Provider:      r.provider,
 			Model:         r.model,
@@ -197,6 +200,7 @@ func (r *usageReporter) ensurePublished(ctx context.Context) {
 			AuthIndex:     r.authIndex,
 			RequestedAt:   r.requestedAt,
 			LatencyMs:     latencyMs,
+			FirstTokenMs:  firstTokenMs,
 			Failed:        false,
 			Detail:        usage.Detail{},
 			InputContent:  inputContent,
@@ -279,6 +283,29 @@ func apiKeyFromContext(ctx context.Context) string {
 		}
 	}
 	return ""
+}
+
+func firstTokenLatencyMsFromContext(ctx context.Context, requestedAt time.Time) int64 {
+	if ctx == nil || requestedAt.IsZero() {
+		return 0
+	}
+	ginCtx, ok := ctx.Value(util.ContextKeyGin).(*gin.Context)
+	if !ok || ginCtx == nil {
+		return 0
+	}
+	value, exists := ginCtx.Get(util.GinKeyFirstResponseAt)
+	if !exists {
+		return 0
+	}
+	firstResponseAt, ok := value.(time.Time)
+	if !ok || firstResponseAt.IsZero() {
+		return 0
+	}
+	latencyMs := firstResponseAt.Sub(requestedAt).Milliseconds()
+	if latencyMs < 0 {
+		return 0
+	}
+	return latencyMs
 }
 
 func resolveUsageSource(auth *cliproxyauth.Auth, ctxAPIKey string) string {

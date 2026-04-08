@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/interfaces"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/logging"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/util"
 )
 
 const requestBodyOverrideContextKey = "REQUEST_BODY_OVERRIDE"
@@ -37,6 +38,7 @@ type ResponseWriterWrapper struct {
 	streamDone          chan struct{}              // streamDone signals when the streaming goroutine completes.
 	logger              logging.RequestLogger      // logger is the instance of the request logger service.
 	requestInfo         *RequestInfo               // requestInfo holds the details of the original request.
+	ginCtx              *gin.Context               // ginCtx allows propagating first-response timing into usage records.
 	statusCode          int                        // statusCode stores the HTTP status code of the response.
 	headers             map[string][]string        // headers stores the response headers.
 	logOnErrorOnly      bool                       // logOnErrorOnly enables logging only when an error response is detected.
@@ -53,12 +55,13 @@ type ResponseWriterWrapper struct {
 //
 // Returns:
 //   - A pointer to a new ResponseWriterWrapper.
-func NewResponseWriterWrapper(w gin.ResponseWriter, logger logging.RequestLogger, requestInfo *RequestInfo) *ResponseWriterWrapper {
+func NewResponseWriterWrapper(w gin.ResponseWriter, logger logging.RequestLogger, requestInfo *RequestInfo, ginCtx *gin.Context) *ResponseWriterWrapper {
 	return &ResponseWriterWrapper{
 		ResponseWriter: w,
 		body:           &bytes.Buffer{},
 		logger:         logger,
 		requestInfo:    requestInfo,
+		ginCtx:         ginCtx,
 		headers:        make(map[string][]string),
 	}
 }
@@ -76,12 +79,12 @@ func (w *ResponseWriterWrapper) Write(data []byte) (int, error) {
 	// CRITICAL: Write to client first (zero latency)
 	n, err := w.ResponseWriter.Write(data)
 
+	if n > 0 {
+		w.markFirstResponseWrite()
+	}
+
 	// THEN: Handle logging based on response type
 	if w.isStreaming && w.chunkChannel != nil {
-		// Capture TTFB on first chunk (synchronous, before async channel send)
-		if w.firstChunkTimestamp.IsZero() {
-			w.firstChunkTimestamp = time.Now()
-		}
 		// For streaming responses: Send to async logging channel (non-blocking)
 		select {
 		case w.chunkChannel <- append([]byte(nil), data...): // Non-blocking send with copy
@@ -124,12 +127,12 @@ func (w *ResponseWriterWrapper) WriteString(data string) (int, error) {
 	// CRITICAL: Write to client first (zero latency)
 	n, err := w.ResponseWriter.WriteString(data)
 
+	if n > 0 {
+		w.markFirstResponseWrite()
+	}
+
 	// THEN: Capture for logging
 	if w.isStreaming && w.chunkChannel != nil {
-		// Capture TTFB on first chunk (synchronous, before async channel send)
-		if w.firstChunkTimestamp.IsZero() {
-			w.firstChunkTimestamp = time.Now()
-		}
 		select {
 		case w.chunkChannel <- []byte(data):
 		default:
@@ -205,6 +208,17 @@ func (w *ResponseWriterWrapper) captureCurrentHeaders() {
 		headerValues := make([]string, len(values))
 		copy(headerValues, values)
 		w.headers[key] = headerValues
+	}
+}
+
+func (w *ResponseWriterWrapper) markFirstResponseWrite() {
+	if !w.firstChunkTimestamp.IsZero() {
+		return
+	}
+	timestamp := time.Now()
+	w.firstChunkTimestamp = timestamp
+	if w.ginCtx != nil {
+		w.ginCtx.Set(util.GinKeyFirstResponseAt, timestamp)
 	}
 }
 

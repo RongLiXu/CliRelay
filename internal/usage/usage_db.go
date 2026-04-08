@@ -25,6 +25,7 @@ type LogRow struct {
 	AuthIndex       string    `json:"auth_index"`
 	Failed          bool      `json:"failed"`
 	LatencyMs       int64     `json:"latency_ms"`
+	FirstTokenMs    int64     `json:"first_token_ms"`
 	InputTokens     int64     `json:"input_tokens"`
 	OutputTokens    int64     `json:"output_tokens"`
 	ReasoningTokens int64     `json:"reasoning_tokens"`
@@ -87,6 +88,7 @@ CREATE TABLE IF NOT EXISTS request_logs (
   auth_index       TEXT NOT NULL DEFAULT '',
   failed           INTEGER NOT NULL DEFAULT 0,
   latency_ms       INTEGER NOT NULL DEFAULT 0,
+  first_token_ms   INTEGER NOT NULL DEFAULT 0,
   input_tokens     INTEGER NOT NULL DEFAULT 0,
   output_tokens    INTEGER NOT NULL DEFAULT 0,
   reasoning_tokens INTEGER NOT NULL DEFAULT 0,
@@ -145,6 +147,16 @@ func migrateApiKeyNameColumn(db *sql.DB) {
 	if err != nil {
 		if !strings.Contains(err.Error(), "duplicate") {
 			log.Warnf("usage: migrate column api_key_name: %v", err)
+		}
+	}
+}
+
+// migrateFirstTokenColumn adds first_token_ms column to an existing request_logs table.
+func migrateFirstTokenColumn(db *sql.DB) {
+	_, err := db.Exec("ALTER TABLE request_logs ADD COLUMN first_token_ms INTEGER NOT NULL DEFAULT 0")
+	if err != nil {
+		if !strings.Contains(err.Error(), "duplicate") {
+			log.Warnf("usage: migrate column first_token_ms: %v", err)
 		}
 	}
 }
@@ -212,6 +224,8 @@ func InitDB(dbPath string, storageCfg config.RequestLogStorageConfig, loc *time.
 	migrateCostColumn(db)
 	log.Debugf("usage: running api_key_name column migration")
 	migrateApiKeyNameColumn(db)
+	log.Debugf("usage: running first_token_ms column migration")
+	migrateFirstTokenColumn(db)
 	log.Debugf("usage: initializing pricing table")
 	initPricingTable(db)
 	log.Debugf("usage: initializing api_keys table")
@@ -238,7 +252,7 @@ func CloseDB() {
 // InsertLog writes a single request log entry into the SQLite database.
 // It is safe to call concurrently.
 func InsertLog(apiKey, apiKeyName, model, source, channelName, authIndex string,
-	failed bool, timestamp time.Time, latencyMs int64, tokens TokenStats,
+	failed bool, timestamp time.Time, latencyMs, firstTokenMs int64, tokens TokenStats,
 	inputContent, outputContent string) {
 
 	db := getDB()
@@ -263,11 +277,11 @@ func InsertLog(apiKey, apiKeyName, model, source, channelName, authIndex string,
 	result, err := tx.Exec(
 		`INSERT INTO request_logs
 			(timestamp, api_key, api_key_name, model, source, channel_name, auth_index,
-			 failed, latency_ms, input_tokens, output_tokens, reasoning_tokens, cached_tokens, total_tokens, cost)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 failed, latency_ms, first_token_ms, input_tokens, output_tokens, reasoning_tokens, cached_tokens, total_tokens, cost)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		timestamp.UTC().Format(time.RFC3339Nano),
 		apiKey, apiKeyName, model, source, channelName, authIndex,
-		failedInt, latencyMs,
+		failedInt, latencyMs, firstTokenMs,
 		tokens.InputTokens, tokens.OutputTokens, tokens.ReasoningTokens,
 		tokens.CachedTokens, tokens.TotalTokens, cost,
 	)
@@ -345,7 +359,7 @@ func QueryLogs(params LogQueryParams) (LogQueryResult, error) {
 	// Fetch page
 	offset := (params.Page - 1) * params.Size
 	querySQL := "SELECT id, timestamp, api_key, api_key_name, model, source, channel_name, auth_index, " +
-		"failed, latency_ms, input_tokens, output_tokens, reasoning_tokens, cached_tokens, total_tokens, " +
+		"failed, latency_ms, first_token_ms, input_tokens, output_tokens, reasoning_tokens, cached_tokens, total_tokens, " +
 		"cost, " +
 		"(CASE WHEN EXISTS (SELECT 1 FROM request_log_content content WHERE content.log_id = request_logs.id) " +
 		"OR length(input_content) > 0 OR length(output_content) > 0 THEN 1 ELSE 0 END) as has_content " +
@@ -366,7 +380,7 @@ func QueryLogs(params LogQueryParams) (LogQueryResult, error) {
 		var failedInt, hasContentInt int
 		if err := rows.Scan(
 			&row.ID, &ts, &row.APIKey, &row.APIKeyName, &row.Model, &row.Source, &row.ChannelName,
-			&row.AuthIndex, &failedInt, &row.LatencyMs,
+			&row.AuthIndex, &failedInt, &row.LatencyMs, &row.FirstTokenMs,
 			&row.InputTokens, &row.OutputTokens, &row.ReasoningTokens,
 			&row.CachedTokens, &row.TotalTokens, &row.Cost, &hasContentInt,
 		); err != nil {

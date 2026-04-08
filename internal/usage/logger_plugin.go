@@ -209,13 +209,14 @@ type modelStats struct {
 
 // RequestDetail stores the timestamp and token usage for a single request.
 type RequestDetail struct {
-	Timestamp   time.Time  `json:"timestamp"`
-	Source      string     `json:"source"`
-	AuthIndex   string     `json:"auth_index"`
-	ChannelName string     `json:"channel_name,omitempty"`
-	Tokens      TokenStats `json:"tokens"`
-	LatencyMs   int64      `json:"latency_ms,omitempty"`
-	Failed      bool       `json:"failed"`
+	Timestamp    time.Time  `json:"timestamp"`
+	Source       string     `json:"source"`
+	AuthIndex    string     `json:"auth_index"`
+	ChannelName  string     `json:"channel_name,omitempty"`
+	Tokens       TokenStats `json:"tokens"`
+	LatencyMs    int64      `json:"latency_ms,omitempty"`
+	FirstTokenMs int64      `json:"first_token_ms,omitempty"`
+	Failed       bool       `json:"failed"`
 }
 
 // TokenStats captures the token usage breakdown for a request.
@@ -322,13 +323,14 @@ func (s *RequestStatistics) Record(ctx context.Context, record coreusage.Record)
 		s.apis[statsKey] = stats
 	}
 	s.updateAPIStats(stats, modelName, RequestDetail{
-		Timestamp:   timestamp,
-		Source:      record.Source,
-		AuthIndex:   record.AuthIndex,
-		ChannelName: record.ChannelName,
-		Tokens:      detail,
-		LatencyMs:   record.LatencyMs,
-		Failed:      failed,
+		Timestamp:    timestamp,
+		Source:       record.Source,
+		AuthIndex:    record.AuthIndex,
+		ChannelName:  record.ChannelName,
+		Tokens:       detail,
+		LatencyMs:    record.LatencyMs,
+		FirstTokenMs: record.FirstTokenMs,
+		Failed:       failed,
 	})
 
 	s.requestsByDay[dayKey]++
@@ -347,7 +349,7 @@ func (s *RequestStatistics) Record(ctx context.Context, record coreusage.Record)
 		}
 	}
 	InsertLog(statsKey, apiKeyName, modelName, record.Source, record.ChannelName,
-		record.AuthIndex, failed, timestamp, record.LatencyMs, detail,
+		record.AuthIndex, failed, timestamp, record.LatencyMs, record.FirstTokenMs, detail,
 		record.InputContent, record.OutputContent)
 }
 

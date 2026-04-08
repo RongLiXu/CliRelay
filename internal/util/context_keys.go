@@ -16,3 +16,9 @@ const (
 	// by proxy-aware HTTP clients.
 	ContextKeyRoundTripper ContextKey = "cliproxy.roundtripper"
 )
+
+const (
+	// GinKeyFirstResponseAt stores the timestamp of the first downstream response
+	// chunk written to the client, used to derive first-token latency.
+	GinKeyFirstResponseAt = "cliproxy.first_response_at"
+)

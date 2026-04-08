@@ -5,6 +5,10 @@ import (
 	"context"
 	"os"
 	"testing"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/util"
 )
 
 func TestParseOpenAIUsageChatCompletions(t *testing.T) {
@@ -70,5 +74,19 @@ func TestUsageReporterSpillsLargeStreamingOutputToTempFile(t *testing.T) {
 	}
 	if _, err := os.Stat(tempPath); !os.IsNotExist(err) {
 		t.Fatalf("expected temp file to be removed, stat err=%v", err)
+	}
+}
+
+func TestFirstTokenLatencyMsFromContext(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ginCtx, _ := gin.CreateTestContext(nil)
+	requestedAt := time.Date(2026, 4, 8, 10, 0, 0, 0, time.UTC)
+	firstResponseAt := requestedAt.Add(183 * time.Millisecond)
+	ginCtx.Set(util.GinKeyFirstResponseAt, firstResponseAt)
+
+	ctx := context.WithValue(context.Background(), util.ContextKeyGin, ginCtx)
+
+	if got := firstTokenLatencyMsFromContext(ctx, requestedAt); got != 183 {
+		t.Fatalf("firstTokenLatencyMsFromContext() = %d, want %d", got, 183)
 	}
 }

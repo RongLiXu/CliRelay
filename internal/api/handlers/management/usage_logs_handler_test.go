@@ -49,7 +49,7 @@ func TestGetUsageLogsPrefersCurrentAuthChannelNameByAuthIndex(t *testing.T) {
 
 	usage.InsertLog(
 		"", "", "gpt-5.4", "pcamtu927@gmail.com", "pcamtu927@gmail.com", auth.Index,
-		false, time.Now().UTC(), 123,
+		false, time.Now().UTC(), 123, 45,
 		usage.TokenStats{InputTokens: 1, OutputTokens: 2, TotalTokens: 3},
 		"", "",
 	)
@@ -71,8 +71,9 @@ func TestGetUsageLogsPrefersCurrentAuthChannelNameByAuthIndex(t *testing.T) {
 
 	var payload struct {
 		Items []struct {
-			ChannelName string `json:"channel_name"`
-			AuthIndex   string `json:"auth_index"`
+			ChannelName  string `json:"channel_name"`
+			AuthIndex    string `json:"auth_index"`
+			FirstTokenMs int64  `json:"first_token_ms"`
 		} `json:"items"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
@@ -86,5 +87,8 @@ func TestGetUsageLogsPrefersCurrentAuthChannelNameByAuthIndex(t *testing.T) {
 	}
 	if payload.Items[0].ChannelName != "GPT1" {
 		t.Fatalf("channel_name = %q, want %q", payload.Items[0].ChannelName, "GPT1")
+	}
+	if payload.Items[0].FirstTokenMs != 45 {
+		t.Fatalf("first_token_ms = %d, want %d", payload.Items[0].FirstTokenMs, 45)
 	}
 }
