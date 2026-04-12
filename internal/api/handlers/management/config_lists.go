@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -365,13 +366,16 @@ func (h *Handler) PatchAPIKeyEntry(c *gin.Context) {
 }
 
 func (h *Handler) DeleteAPIKeyEntry(c *gin.Context) {
+	deleteLogs := shouldDeleteAPIKeyLogs(c)
 	if val := strings.TrimSpace(c.Query("key")); val != "" {
 		if err := usage.DeleteAPIKey(val); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-		// Cascade-delete all associated request logs
-		logsDeleted, _ := usage.DeleteLogsByAPIKey(val)
+		var logsDeleted int64
+		if deleteLogs {
+			logsDeleted, _ = usage.DeleteLogsByAPIKey(val)
+		}
 		h.refreshAPIKeyCache()
 		c.JSON(200, gin.H{"status": "ok", "logs_deleted": logsDeleted})
 		return
@@ -386,8 +390,10 @@ func (h *Handler) DeleteAPIKeyEntry(c *gin.Context) {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 					return
 				}
-				// Cascade-delete all associated request logs
-				logsDeleted, _ := usage.DeleteLogsByAPIKey(keyVal)
+				var logsDeleted int64
+				if deleteLogs {
+					logsDeleted, _ = usage.DeleteLogsByAPIKey(keyVal)
+				}
 				h.refreshAPIKeyCache()
 				c.JSON(200, gin.H{"status": "ok", "logs_deleted": logsDeleted})
 				return
@@ -395,6 +401,18 @@ func (h *Handler) DeleteAPIKeyEntry(c *gin.Context) {
 		}
 	}
 	c.JSON(400, gin.H{"error": "missing key or index"})
+}
+
+func shouldDeleteAPIKeyLogs(c *gin.Context) bool {
+	raw := strings.TrimSpace(c.Query("delete_logs"))
+	if raw == "" {
+		return true
+	}
+	value, err := strconv.ParseBool(raw)
+	if err != nil {
+		return true
+	}
+	return value
 }
 
 // gemini-api-key: []GeminiKey
