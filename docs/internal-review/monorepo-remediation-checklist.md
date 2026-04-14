@@ -26,7 +26,7 @@
 - [ ] 为 Auth Files 拆分后的 quota 聚合、文件筛选、sessionStorage 缓存读写、OAuth 状态转换补单测。完成时间：待填写
 - [x] 将 `codeProxy/src/modules/providers/ProvidersPage.tsx` 拆分为 Provider key 卡片、OpenAI provider 列表/表单、Ampcode 配置、模型发现与状态栏 hooks，主页面文件降到 600 行以内。完成时间：2026-04-13 20:28:39 +0800
 - [ ] 为 Providers 拆分后的 provider draft、model discovery、usage source 归一化、API key masking 补单测。完成时间：待填写
-- [ ] 将 `codeProxy/src/modules/api-keys/ApiKeysPage.tsx` 拆分为 key 表格、编辑弹窗、权限/限制选择器、日志快捷入口、配额展示 hooks，主页面文件降到 600 行以内。完成时间：待填写
+- [x] 将 `codeProxy/src/modules/api-keys/ApiKeysPage.tsx` 拆分为 key 表格、编辑弹窗、权限/限制选择器、日志快捷入口、配额展示 hooks，主页面文件降到 600 行以内。完成时间：2026-04-14 14:27:30 +0800
 - [x] 将 `codeProxy/src/modules/config/ConfigPage.tsx` 和 `codeProxy/src/modules/config/visual/VisualConfigEditor.tsx` 拆分为 source editor、runtime panel、visual editor sections、保存流程 hooks。完成时间：2026-04-13 22:50:01 +0800
 - [x] 将 `codeProxy/src/modules/apikey-lookup/ApiKeyLookupPage.tsx` 拆分为公开查询表单、KPI、图表、请求日志表、数据加载 hooks。完成时间：2026-04-14 07:57:59 +0800
 - [x] 将 `codeProxy/src/modules/monitor/LogContentModal.tsx` 拆分为内容加载 hook、Markdown/XML 渲染组件、复制导出组件、输入/输出 tab 状态。完成时间：2026-04-13 15:38:53 +0800
