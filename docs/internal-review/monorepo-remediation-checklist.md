@@ -84,6 +84,7 @@
 - [x] 为 Gemini CLI OAuth userinfo、GCP project list、service usage enable 检查与 Antigravity token refresh 等管理端“小响应”路径改用限量读取，避免认证辅助流程无上限读体。完成时间：2026-04-14 10:30:05 +0800
 - [ ] 为上游响应体和错误响应体定义 provider-specific 最大读取限制，避免大响应导致内存压力。完成时间：待填写
 - [ ] 将请求 handler 路径中的 `context.Background()` 改为 `c.Request.Context()` 或请求派生 context。完成时间：待填写
+- [x] 将管理面板静态资源缺失时的在线补拉链路改为优先继承当前请求的 `c.Request.Context()`，避免控制面板请求取消后仍继续补拉资源。完成时间：2026-04-14 10:44:01 +0800
 - [x] 为 `gin.Engine` 显式配置 `SetTrustedProxies(nil)` 或受控代理白名单，禁止依赖 Gin 默认行为。完成时间：2026-04-13 14:23:15 +0800
 - [x] 增加管理接口安全回归测试，验证伪造 `X-Forwarded-For` 不能把远程请求伪装成本地请求。完成时间：2026-04-13 14:50:29 +0800
 - [x] 收紧默认 CORS 策略，将 `Access-Control-Allow-Origin: *` 改为可配置 allowlist，并为 SSE/流式 handler 统一实现。完成时间：2026-04-13 14:50:29 +0800
