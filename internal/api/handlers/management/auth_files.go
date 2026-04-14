@@ -144,7 +144,7 @@ func startCallbackForwarder(port int, provider, targetBase string) (*callbackFor
 	callbackForwardersMu.Unlock()
 
 	if prev != nil {
-		stopForwarderInstance(port, prev)
+		stopForwarderInstance(context.Background(), port, prev)
 	}
 
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
@@ -203,10 +203,10 @@ func stopCallbackForwarder(port int) {
 	}
 	callbackForwardersMu.Unlock()
 
-	stopForwarderInstance(port, forwarder)
+	stopForwarderInstance(context.Background(), port, forwarder)
 }
 
-func stopCallbackForwarderInstance(port int, forwarder *callbackForwarder) {
+func stopCallbackForwarderInstance(ctx context.Context, port int, forwarder *callbackForwarder) {
 	if forwarder == nil {
 		return
 	}
@@ -216,15 +216,19 @@ func stopCallbackForwarderInstance(port int, forwarder *callbackForwarder) {
 	}
 	callbackForwardersMu.Unlock()
 
-	stopForwarderInstance(port, forwarder)
+	stopForwarderInstance(ctx, port, forwarder)
 }
 
-func stopForwarderInstance(port int, forwarder *callbackForwarder) {
+func stopForwarderInstance(ctx context.Context, port int, forwarder *callbackForwarder) {
 	if forwarder == nil || forwarder.server == nil {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	parentCtx := ctx
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parentCtx, 2*time.Second)
 	defer cancel()
 
 	if err := forwarder.server.Shutdown(ctx); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -1055,7 +1059,7 @@ func (h *Handler) RequestAnthropicToken(c *gin.Context) {
 
 	go func() {
 		if isWebUI {
-			defer stopCallbackForwarderInstance(anthropicCallbackPort, forwarder)
+			defer stopCallbackForwarderInstance(ctx, anthropicCallbackPort, forwarder)
 		}
 
 		// Helper: wait for callback file
@@ -1200,7 +1204,7 @@ func (h *Handler) RequestGeminiCLIToken(c *gin.Context) {
 
 	go func() {
 		if isWebUI {
-			defer stopCallbackForwarderInstance(geminiCallbackPort, forwarder)
+			defer stopCallbackForwarderInstance(ctx, geminiCallbackPort, forwarder)
 		}
 
 		// Wait for callback file written by server route
@@ -1476,7 +1480,7 @@ func (h *Handler) RequestCodexToken(c *gin.Context) {
 
 	go func() {
 		if isWebUI {
-			defer stopCallbackForwarderInstance(codexCallbackPort, forwarder)
+			defer stopCallbackForwarderInstance(ctx, codexCallbackPort, forwarder)
 		}
 
 		// Wait for callback file
@@ -1610,7 +1614,7 @@ func (h *Handler) RequestAntigravityToken(c *gin.Context) {
 
 	go func() {
 		if isWebUI {
-			defer stopCallbackForwarderInstance(antigravity.CallbackPort, forwarder)
+			defer stopCallbackForwarderInstance(ctx, antigravity.CallbackPort, forwarder)
 		}
 
 		waitFile := filepath.Join(h.cfg.AuthDir, fmt.Sprintf(".oauth-antigravity-%s.oauth", state))
@@ -1897,7 +1901,7 @@ func (h *Handler) RequestIFlowToken(c *gin.Context) {
 
 	go func() {
 		if isWebUI {
-			defer stopCallbackForwarderInstance(iflowauth.CallbackPort, forwarder)
+			defer stopCallbackForwarderInstance(ctx, iflowauth.CallbackPort, forwarder)
 		}
 		fmt.Println("Waiting for authentication...")
 
