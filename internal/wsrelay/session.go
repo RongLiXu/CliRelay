@@ -108,6 +108,9 @@ func (s *session) run(ctx context.Context) {
 
 func (s *session) dispatch(msg Message) {
 	if msg.Type == MessageTypePing {
+		// Pong responses are transport-level keepalive traffic initiated by the
+		// websocket peer, not by any caller request. They therefore use a detached
+		// context and rely on the session connection lifecycle for cleanup.
 		_ = s.send(context.Background(), Message{ID: msg.ID, Type: MessageTypePong})
 		return
 	}

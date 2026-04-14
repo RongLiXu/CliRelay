@@ -162,6 +162,10 @@ func (s *Service) emitAuthUpdate(ctx context.Context, update watcher.AuthUpdate)
 		return
 	}
 	if ctx == nil {
+		// Service-originated updates (for example websocket provider lifecycle events)
+		// may be emitted outside any request scope. In that case the service owns a
+		// detached root context and the downstream auth-update queue provides the
+		// bounded handoff/cleanup behavior.
 		ctx = context.Background()
 	}
 	if s.watcher != nil && s.watcher.DispatchRuntimeAuthUpdate(update) {
@@ -252,6 +256,8 @@ func (s *Service) wsOnConnected(channelID string) {
 		Metadata:   map[string]any{"email": channelID}, // metadata drives logging and usage tracking
 	}
 	log.Infof("websocket provider connected: %s", channelID)
+	// Websocket provider presence is a service-owned runtime signal, not a
+	// request-scoped action. Detach it from any transient caller cancellation.
 	s.emitAuthUpdate(context.WithoutCancel(context.Background()), watcher.AuthUpdate{
 		Action: watcher.AuthUpdateActionAdd,
 		ID:     auth.ID,
@@ -272,6 +278,8 @@ func (s *Service) wsOnDisconnected(channelID string, reason error) {
 	} else {
 		log.Infof("websocket provider disconnected: %s", channelID)
 	}
+	// Disconnect notifications are also service-owned runtime events and must
+	// still be processed during shutdown and reconnect churn.
 	s.emitAuthUpdate(context.WithoutCancel(context.Background()), watcher.AuthUpdate{
 		Action: watcher.AuthUpdateActionDelete,
 		ID:     channelID,
@@ -465,11 +473,15 @@ func (s *Service) Run(ctx context.Context) error {
 		return fmt.Errorf("cliproxy: service is nil")
 	}
 	if ctx == nil {
+		// The top-level service may be started without an external owner context.
+		// In that case it owns the root process lifetime itself.
 		ctx = context.Background()
 	}
 
 	usage.StartDefault(ctx)
 
+	// Shutdown needs a bounded context that survives parent cancellation long
+	// enough to stop the HTTP server, watcher, websocket gateway, and pprof cleanly.
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer shutdownCancel()
 	defer func() {
@@ -515,6 +527,8 @@ func (s *Service) Run(ctx context.Context) error {
 				return
 			}
 			if !oldEnabled && newEnabled {
+				// Existing websocket sessions are service-owned and must be terminated
+				// even if the caller that changed config has already been cancelled.
 				ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 				defer cancel()
 				if errStop := s.wsGateway.Stop(ctx); errStop != nil {
@@ -630,6 +644,8 @@ func (s *Service) Run(ctx context.Context) error {
 	// Prefer core auth manager auto refresh if available.
 	if s.coreManager != nil {
 		interval := 15 * time.Minute
+		// Auto-refresh is a service-owned background loop and intentionally outlives
+		// any one request while remaining bound to the service lifetime.
 		s.coreManager.StartAutoRefresh(context.WithoutCancel(ctx), interval)
 		log.Infof("core auth auto-refresh started (interval=%s)", interval)
 	}
@@ -659,6 +675,8 @@ func (s *Service) Shutdown(ctx context.Context) error {
 	var shutdownErr error
 	s.shutdownOnce.Do(func() {
 		if ctx == nil {
+			// Shutdown may be invoked from deferred cleanup after the main service
+			// context is already gone. Fall back to a root context so cleanup can finish.
 			ctx = context.Background()
 		}
 
@@ -806,8 +824,12 @@ func (s *Service) registerModelsForAuth(ctx context.Context, a *coreauth.Auth) {
 	case "antigravity":
 		fetchCtx := ctx
 		if fetchCtx == nil {
+			// Model fetch can be called from service-owned refresh paths that have no
+			// request scope; fall back to a service-owned root context in that case.
 			fetchCtx = context.Background()
 		}
+		// Model registration should not be aborted by unrelated caller cancellation
+		// once the service has committed to refreshing the registry.
 		fetchCtx, cancel := context.WithTimeout(context.WithoutCancel(fetchCtx), 15*time.Second)
 		models = executor.FetchAntigravityModels(fetchCtx, a, s.cfg)
 		cancel()

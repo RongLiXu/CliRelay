@@ -1403,6 +1403,9 @@ func (s *Server) UpdateClients(cfg *config.Config) {
 	if dirSetter, ok := tokenStore.(interface{ SetBaseDir(string) }); ok {
 		dirSetter.SetBaseDir(cfg.AuthDir)
 	}
+	// Counting auth entries is a config-application bookkeeping step that is not
+	// tied to any request lifecycle. It intentionally uses a root context and
+	// degrades to zero on listing failure inside util.CountAuthFiles.
 	authEntries := util.CountAuthFiles(context.Background(), tokenStore)
 	geminiAPIKeyCount := len(cfg.GeminiKey)
 	claudeAPIKeyCount := len(cfg.ClaudeKey)
