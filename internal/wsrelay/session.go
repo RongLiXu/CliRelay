@@ -190,10 +190,10 @@ func (s *session) cleanup(cause error) {
 			case req.ch <- msg:
 			default:
 			}
+			s.pending.Delete(key)
 			req.close()
 			return true
 		})
-		s.pending = sync.Map{}
 		_ = s.conn.Close()
 		if s.manager != nil {
 			s.manager.handleSessionClosed(s, cause)
