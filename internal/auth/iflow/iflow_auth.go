@@ -26,6 +26,7 @@ const (
 
 	// Cookie authentication endpoints
 	iFlowAPIKeyEndpoint = "https://platform.iflow.cn/api/openapi/apikey"
+	iflowOAuthBodyLabel = "iflow-oauth"
 
 	// Client credentials provided by iFlow for the Code Assist integration.
 	iFlowOAuthClientID     = "10009311001"
@@ -367,7 +368,7 @@ func (ia *IFlowAuth) fetchAPIKeyInfo(ctx context.Context, cookie string) (*iFlow
 		reader = gzipReader
 	}
 
-	body, err := io.ReadAll(reader)
+	body, err := util.ReadHTTPResponseBody(iflowOAuthBodyLabel, reader)
 	if err != nil {
 		return nil, fmt.Errorf("iflow cookie: read GET response failed: %w", err)
 	}
@@ -446,7 +447,7 @@ func (ia *IFlowAuth) RefreshAPIKey(ctx context.Context, cookie, name string) (*i
 		reader = gzipReader
 	}
 
-	body, err := io.ReadAll(reader)
+	body, err := util.ReadHTTPResponseBody(iflowOAuthBodyLabel, reader)
 	if err != nil {
 		return nil, fmt.Errorf("iflow cookie refresh: read POST response failed: %w", err)
 	}
