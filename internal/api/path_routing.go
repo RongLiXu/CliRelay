@@ -51,18 +51,46 @@ func groupRoutingMiddleware(resolve func(string) (*internalrouting.PathRouteCont
 		}
 		route, ok := resolve(c.Param("group"))
 		if !ok || route == nil {
-			c.AbortWithStatusJSON(http.StatusNotFound, gin.H{
-				"error": map[string]any{
-					"message": "channel group route not found",
-					"type":    "invalid_request_error",
-					"code":    "route_group_unavailable",
-				},
-			})
+			abortChannelGroupRouteNotFound(c)
 			return
 		}
 		c.Set(internalrouting.GinPathRouteContextKey, route)
 		c.Next()
 	}
+}
+
+func abortChannelGroupRouteNotFound(c *gin.Context) {
+	if c == nil {
+		return
+	}
+	c.AbortWithStatusJSON(http.StatusNotFound, gin.H{
+		"error": map[string]any{
+			"message": "channel group route not found",
+			"type":    "invalid_request_error",
+			"code":    "route_group_unavailable",
+		},
+	})
+}
+
+func splitGroupedAPIPath(path string) (string, string, bool) {
+	path = strings.TrimSpace(path)
+	if path == "" || path == "/" {
+		return "", "", false
+	}
+	markers := []string{"/v1beta/", "/v1/"}
+	for _, marker := range markers {
+		idx := strings.LastIndex(path, marker)
+		if idx <= 0 {
+			continue
+		}
+		groupPath := path[:idx]
+		apiPath := path[idx:]
+		if internalrouting.NormalizeNamespacePath(groupPath) == "" {
+			return "", "", false
+		}
+		return groupPath, apiPath, true
+	}
+	return "", "", false
 }
 
 func channelGroupAuthorizationMiddleware() gin.HandlerFunc {

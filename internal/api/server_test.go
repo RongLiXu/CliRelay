@@ -159,6 +159,25 @@ func TestGroupedV1RouteConfigured(t *testing.T) {
 	}
 }
 
+func TestGroupedNestedV1RouteConfigured(t *testing.T) {
+	server := newTestServerWithConfig(t, func(cfg *proxyconfig.Config) {
+		cfg.Routing.PathRoutes = []proxyconfig.RoutingPathRoute{
+			{Path: "/openai/pro", Group: "pro"},
+		}
+		cfg.SanitizeRouting()
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/openai/pro/v1/models", nil)
+	req.Header.Set("Authorization", "Bearer test-key")
+
+	rr := httptest.NewRecorder()
+	server.engine.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+}
+
 func TestGroupedV1RouteForbiddenByAPIKeyGroups(t *testing.T) {
 	server := newTestServerWithConfig(t, func(cfg *proxyconfig.Config) {
 		cfg.SDKConfig.APIKeys = nil

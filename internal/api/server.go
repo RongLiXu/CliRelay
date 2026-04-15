@@ -412,6 +412,32 @@ func (s *Server) setupRoutes() {
 	groupedV1Beta.Use(ModelRestrictionMiddleware())
 	registerV1BetaRoutes(groupedV1Beta)
 
+	s.engine.NoRoute(func(c *gin.Context) {
+		if _, rewritten := c.Get("cliproxy.grouped_path_rewrite"); rewritten {
+			c.AbortWithStatus(http.StatusNotFound)
+			return
+		}
+		rawGroupPath, apiPath, ok := splitGroupedAPIPath(c.Request.URL.Path)
+		if !ok {
+			c.AbortWithStatus(http.StatusNotFound)
+			return
+		}
+		route, ok := resolveRoute(rawGroupPath)
+		if !ok || route == nil {
+			abortChannelGroupRouteNotFound(c)
+			return
+		}
+		c.Set(internalrouting.GinPathRouteContextKey, route)
+		c.Set("cliproxy.grouped_path_rewrite", true)
+		c.Request.URL.Path = apiPath
+		if c.Request.URL.RawQuery != "" {
+			c.Request.RequestURI = apiPath + "?" + c.Request.URL.RawQuery
+		} else {
+			c.Request.RequestURI = apiPath
+		}
+		s.engine.HandleContext(c)
+	})
+
 	// Root endpoint
 	s.engine.GET("/", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
