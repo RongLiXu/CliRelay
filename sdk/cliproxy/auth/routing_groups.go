@@ -105,7 +105,6 @@ func authGroups(cfg *internalconfig.Config, auth *Auth) map[string]struct{} {
 		}
 		return out
 	}
-	channelName := strings.ToLower(strings.TrimSpace(auth.ChannelName()))
 	authPrefix := internalrouting.NormalizeGroupName(auth.Prefix)
 	for i := range cfg.Routing.ChannelGroups {
 		group := cfg.Routing.ChannelGroups[i]
@@ -118,7 +117,7 @@ func authGroups(cfg *internalconfig.Config, auth *Auth) map[string]struct{} {
 		}
 		if !matched {
 			for _, channel := range group.Match.Channels {
-				if channelName != "" && strings.EqualFold(strings.TrimSpace(channel), channelName) {
+				if authMatchesChannelName(auth, channel) {
 					matched = true
 					break
 				}
@@ -164,14 +163,13 @@ func derivedGroupPriority(cfg *internalconfig.Config, auth *Auth) int {
 		return 0
 	}
 	best := 0
-	channelName := strings.TrimSpace(auth.ChannelName())
 	for i := range cfg.Routing.ChannelGroups {
 		group := cfg.Routing.ChannelGroups[i]
 		if _, ok := groups[group.Name]; !ok {
 			continue
 		}
 		for name, priority := range group.ChannelPriorities {
-			if channelName != "" && strings.EqualFold(strings.TrimSpace(name), channelName) && priority > best {
+			if authMatchesChannelName(auth, name) && priority > best {
 				best = priority
 			}
 		}

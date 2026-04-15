@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 )
 
 func testRoutingConfig() *config.Config {
@@ -229,6 +230,89 @@ func TestGetChannelGroupsReturnsGroupMetadata(t *testing.T) {
 	}
 	if len(body.Items) < 3 {
 		t.Fatalf("expected at least 3 group items, got %d", len(body.Items))
+	}
+}
+
+func TestBuildChannelGroupItemsCanonicalizesRenamedOAuthChannel(t *testing.T) {
+	cfg := &config.Config{
+		Routing: config.RoutingConfig{
+			ChannelGroups: []config.RoutingChannelGroup{
+				{
+					Name: "team-alpha",
+					Match: config.ChannelGroupMatch{
+						Channels: []string{"gcqcdaihyrte@outlook.com"},
+					},
+				},
+			},
+			PathRoutes: []config.RoutingPathRoute{
+				{Path: "/team-alpha", Group: "team-alpha", StripPrefix: true},
+			},
+		},
+	}
+	auths := []*coreauth.Auth{
+		{
+			ID:       "oauth-1",
+			Label:    "chatgpt-pro1",
+			Prefix:   "team-alpha",
+			Provider: "claude",
+			Metadata: map[string]any{
+				"email": "gcqcdaihyrte@outlook.com",
+			},
+		},
+	}
+
+	items := buildChannelGroupItems(cfg, auths)
+	if len(items) != 1 {
+		t.Fatalf("expected 1 group, got %d", len(items))
+	}
+	if !containsString(items[0].Channels, "chatgpt-pro1") {
+		t.Fatalf("group channels = %v, want canonical renamed channel", items[0].Channels)
+	}
+	if containsString(items[0].Channels, "gcqcdaihyrte@outlook.com") {
+		t.Fatalf("group channels = %v, should not contain legacy email alias", items[0].Channels)
+	}
+}
+
+func TestCanonicalizeRoutingConfigChannelsRenamedOAuthChannel(t *testing.T) {
+	cfg := &config.Config{
+		Routing: config.RoutingConfig{
+			ChannelGroups: []config.RoutingChannelGroup{
+				{
+					Name: "team-alpha",
+					Match: config.ChannelGroupMatch{
+						Channels: []string{"gcqcdaihyrte@outlook.com"},
+					},
+					ChannelPriorities: map[string]int{
+						"gcqcdaihyrte@outlook.com": 100,
+					},
+				},
+			},
+		},
+	}
+	auths := []*coreauth.Auth{
+		{
+			ID:       "oauth-1",
+			Label:    "chatgpt-pro1",
+			Provider: "claude",
+			Metadata: map[string]any{
+				"email": "gcqcdaihyrte@outlook.com",
+			},
+		},
+	}
+
+	known, err := collectKnownChannels(cfg, auths, "")
+	if err != nil {
+		t.Fatalf("collectKnownChannels() error = %v", err)
+	}
+	got := canonicalizeRoutingConfigChannels(currentRoutingConfig(cfg), known)
+	if !containsString(got.ChannelGroups[0].Match.Channels, "chatgpt-pro1") {
+		t.Fatalf("match.channels = %v, want canonical renamed channel", got.ChannelGroups[0].Match.Channels)
+	}
+	if _, exists := got.ChannelGroups[0].ChannelPriorities["chatgpt-pro1"]; !exists {
+		t.Fatalf("channel-priorities = %v, want canonical renamed key", got.ChannelGroups[0].ChannelPriorities)
+	}
+	if _, exists := got.ChannelGroups[0].ChannelPriorities["gcqcdaihyrte@outlook.com"]; exists {
+		t.Fatalf("channel-priorities = %v, should not contain legacy email alias", got.ChannelGroups[0].ChannelPriorities)
 	}
 }
 

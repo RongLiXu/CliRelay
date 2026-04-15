@@ -54,3 +54,37 @@ func TestCanServeModelWithScopesSupportsAllowedGroupPrefixedModels(t *testing.T)
 		t.Fatal("expected unprefixed model to be available through allowed pro group")
 	}
 }
+
+func TestAuthGroupsMatchesLegacyOAuthEmailAfterRename(t *testing.T) {
+	t.Parallel()
+
+	cfg := &internalconfig.Config{
+		Routing: internalconfig.RoutingConfig{
+			ChannelGroups: []internalconfig.RoutingChannelGroup{
+				{
+					Name: "team-alpha",
+					Match: internalconfig.ChannelGroupMatch{
+						Channels: []string{"legacy@example.com"},
+					},
+					ChannelPriorities: map[string]int{
+						"legacy@example.com": 100,
+					},
+				},
+			},
+		},
+	}
+	auth := &Auth{
+		Label: "chatgpt-pro1",
+		Metadata: map[string]any{
+			"email": "legacy@example.com",
+		},
+	}
+
+	groups := authGroups(cfg, auth)
+	if _, ok := groups["team-alpha"]; !ok {
+		t.Fatalf("expected group match through legacy email alias, got %v", groups)
+	}
+	if got := derivedGroupPriority(cfg, auth); got != 100 {
+		t.Fatalf("derivedGroupPriority() = %d, want 100", got)
+	}
+}

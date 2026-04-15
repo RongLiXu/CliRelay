@@ -26,7 +26,15 @@ func sqliteAPIKeyEntries() []config.APIKeyEntry {
 }
 
 func (h *Handler) GetRoutingConfig(c *gin.Context) {
-	c.JSON(http.StatusOK, currentRoutingConfig(h.cfg))
+	var auths []*coreauth.Auth
+	if h != nil && h.authManager != nil {
+		auths = h.authManager.List()
+	}
+	routing := currentRoutingConfig(h.cfg)
+	if known, err := collectKnownChannels(h.cfg, auths, ""); err == nil {
+		routing = canonicalizeRoutingConfigChannels(routing, known)
+	}
+	c.JSON(http.StatusOK, routing)
 }
 
 func (h *Handler) PutRoutingConfig(c *gin.Context) {
@@ -47,6 +55,10 @@ func (h *Handler) PutRoutingConfig(c *gin.Context) {
 	var auths []*coreauth.Auth
 	if h != nil && h.authManager != nil {
 		auths = h.authManager.List()
+	}
+	if known, err := collectKnownChannels(h.cfg, auths, ""); err == nil {
+		candidate.Routing = canonicalizeRoutingConfigChannels(candidate.Routing, known)
+		candidate.APIKeyEntries = canonicalizeAPIKeyEntriesChannels(candidate.APIKeyEntries, known)
 	}
 	if err := validateRoutingAndAPIKeyRestrictions(candidate, auths); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

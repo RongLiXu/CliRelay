@@ -1694,12 +1694,12 @@ func authAllowedByChannels(auth *Auth, allowed map[string]struct{}) bool {
 	if auth == nil {
 		return false
 	}
-	channel := strings.ToLower(strings.TrimSpace(auth.ChannelName()))
-	if channel == "" {
-		return false
+	for _, identifier := range auth.ChannelIdentifiers() {
+		if _, ok := allowed[strings.ToLower(strings.TrimSpace(identifier))]; ok {
+			return true
+		}
 	}
-	_, ok := allowed[channel]
-	return ok
+	return false
 }
 
 // CanServeModelWithChannels reports whether at least one active auth in the allowed channel set supports modelID.

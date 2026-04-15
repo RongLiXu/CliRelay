@@ -70,14 +70,16 @@ func collectChannelDescriptors(cfg *config.Config, auths []*coreauth.Auth) []cha
 func buildChannelGroupItems(cfg *config.Config, auths []*coreauth.Auth) []channelGroupItem {
 	items := collectChannelDescriptors(cfg, auths)
 	knownPaths := make(map[string][]string)
-	if cfg != nil {
-		for _, route := range cfg.Routing.PathRoutes {
-			group := internalrouting.NormalizeGroupName(route.Group)
-			if group == "" {
-				continue
-			}
-			knownPaths[group] = append(knownPaths[group], route.Path)
+	routingCfg := currentRoutingConfig(cfg)
+	if known, err := collectKnownChannels(cfg, auths, ""); err == nil {
+		routingCfg = canonicalizeRoutingConfigChannels(routingCfg, known)
+	}
+	for _, route := range routingCfg.PathRoutes {
+		group := internalrouting.NormalizeGroupName(route.Group)
+		if group == "" {
+			continue
 		}
+		knownPaths[group] = append(knownPaths[group], route.Path)
 	}
 
 	groupMap := make(map[string]*channelGroupItem)
@@ -97,20 +99,18 @@ func buildChannelGroupItems(cfg *config.Config, auths []*coreauth.Auth) []channe
 		return item
 	}
 
-	if cfg != nil {
-		for _, group := range cfg.Routing.ChannelGroups {
-			item := ensureGroup(group.Name, false)
-			if item == nil {
-				continue
-			}
-			item.Description = group.Description
-			item.Priority = group.Priority
-			item.Prefixes = append(item.Prefixes, group.Match.Prefixes...)
-			item.Channels = append(item.Channels, group.Match.Channels...)
+	for _, group := range routingCfg.ChannelGroups {
+		item := ensureGroup(group.Name, false)
+		if item == nil {
+			continue
 		}
+		item.Description = group.Description
+		item.Priority = group.Priority
+		item.Prefixes = append(item.Prefixes, group.Match.Prefixes...)
+		item.Channels = append(item.Channels, group.Match.Channels...)
 	}
 
-	includeDefault := cfg == nil || cfg.Routing.IncludeDefaultGroup
+	includeDefault := cfg == nil || routingCfg.IncludeDefaultGroup
 	if includeDefault {
 		ensureGroup("default", true)
 	}
@@ -227,6 +227,15 @@ func validateRoutingAndAPIKeyRestrictions(cfg *config.Config, auths []*coreauth.
 		return nil
 	}
 
+	routingCfg := currentRoutingConfig(cfg)
+	apiKeyEntries := append([]config.APIKeyEntry(nil), cfg.APIKeyEntries...)
+	known, err := collectKnownChannels(cfg, auths, "")
+	if err != nil {
+		return err
+	}
+	routingCfg = canonicalizeRoutingConfigChannels(routingCfg, known)
+	apiKeyEntries = canonicalizeAPIKeyEntriesChannels(cfg.APIKeyEntries, known)
+
 	groups := buildChannelGroupItems(cfg, auths)
 	descriptors := collectChannelDescriptors(cfg, auths)
 	knownGroups := make(map[string]channelGroupItem, len(groups))
@@ -234,8 +243,8 @@ func validateRoutingAndAPIKeyRestrictions(cfg *config.Config, auths []*coreauth.
 		knownGroups[group.Name] = group
 	}
 
-	seenGroupNames := make(map[string]struct{}, len(cfg.Routing.ChannelGroups))
-	for _, group := range cfg.Routing.ChannelGroups {
+	seenGroupNames := make(map[string]struct{}, len(routingCfg.ChannelGroups))
+	for _, group := range routingCfg.ChannelGroups {
 		name := internalrouting.NormalizeGroupName(group.Name)
 		if name == "" {
 			return fmt.Errorf("routing.channel-groups contains an empty name")
@@ -249,8 +258,8 @@ func validateRoutingAndAPIKeyRestrictions(cfg *config.Config, auths []*coreauth.
 		}
 	}
 
-	seenPaths := make(map[string]struct{}, len(cfg.Routing.PathRoutes))
-	for _, route := range cfg.Routing.PathRoutes {
+	seenPaths := make(map[string]struct{}, len(routingCfg.PathRoutes))
+	for _, route := range routingCfg.PathRoutes {
 		path := internalrouting.NormalizeNamespacePath(route.Path)
 		if path == "" {
 			return fmt.Errorf("invalid path route %q", route.Path)
@@ -270,7 +279,7 @@ func validateRoutingAndAPIKeyRestrictions(cfg *config.Config, auths []*coreauth.
 		}
 	}
 
-	if len(cfg.APIKeyEntries) == 0 {
+	if len(apiKeyEntries) == 0 {
 		return nil
 	}
 	channelGroupMap := make(map[string]map[string]struct{}, len(groups))
@@ -282,7 +291,7 @@ func validateRoutingAndAPIKeyRestrictions(cfg *config.Config, auths []*coreauth.
 		channelGroupMap[group.Name] = set
 	}
 
-	for _, entry := range cfg.APIKeyEntries {
+	for _, entry := range apiKeyEntries {
 		allowedGroups := uniqueChannelGroups(entry.AllowedChannelGroups)
 		for _, group := range allowedGroups {
 			if _, exists := knownGroups[group]; !exists {

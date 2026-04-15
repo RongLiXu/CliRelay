@@ -417,6 +417,53 @@ func (a *Auth) ChannelName() string {
 	return strings.TrimSpace(a.Provider)
 }
 
+// ChannelIdentifiers returns the canonical channel name first, followed by any
+// legacy identifiers that should still resolve to the same channel.
+func (a *Auth) ChannelIdentifiers() []string {
+	if a == nil {
+		return nil
+	}
+	out := make([]string, 0, 2)
+	seen := make(map[string]struct{}, 2)
+	appendValue := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		key := strings.ToLower(value)
+		if _, exists := seen[key]; exists {
+			return
+		}
+		seen[key] = struct{}{}
+		out = append(out, value)
+	}
+
+	appendValue(a.ChannelName())
+	if a.Metadata != nil {
+		if raw, ok := a.Metadata["email"].(string); ok {
+			appendValue(raw)
+		}
+	}
+
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func authMatchesChannelName(auth *Auth, candidate string) bool {
+	candidate = strings.TrimSpace(candidate)
+	if auth == nil || candidate == "" {
+		return false
+	}
+	for _, identifier := range auth.ChannelIdentifiers() {
+		if strings.EqualFold(identifier, candidate) {
+			return true
+		}
+	}
+	return false
+}
+
 // ExpirationTime attempts to extract the credential expiration timestamp from metadata.
 // It inspects common keys such as "expired", "expire", "expires_at", and also
 // nested "token" objects to remain compatible with legacy auth file formats.

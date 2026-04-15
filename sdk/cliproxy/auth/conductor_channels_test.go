@@ -39,6 +39,14 @@ func TestAuthAllowedByChannelsUsesResolvedChannelName(t *testing.T) {
 		t.Fatal("expected metadata label to match allowed channels")
 	}
 	if !authAllowedByChannels(&Auth{
+		Label: "chatgpt-pro1",
+		Metadata: map[string]any{
+			"email": "team-alpha@example.com",
+		},
+	}, map[string]struct{}{"team-alpha@example.com": {}}) {
+		t.Fatal("expected legacy email alias to match renamed channel")
+	}
+	if !authAllowedByChannels(&Auth{
 		Provider: "claude",
 		Metadata: map[string]any{
 			"email": "team-alpha@example.com",
