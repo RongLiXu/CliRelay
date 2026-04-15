@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/interfaces"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/routing"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/util"
@@ -167,6 +168,59 @@ func (e *invalidJSONStreamExecutor) HttpRequest(ctx context.Context, auth *corea
 		Message:    "HttpRequest not implemented",
 		HTTPStatus: http.StatusNotImplemented,
 	}
+}
+
+type invalidModelStreamExecutor struct {
+	mu      sync.Mutex
+	calls   int
+	authIDs []string
+}
+
+func (e *invalidModelStreamExecutor) Identifier() string { return "codex" }
+
+func (e *invalidModelStreamExecutor) Execute(context.Context, *coreauth.Auth, coreexecutor.Request, coreexecutor.Options) (coreexecutor.Response, error) {
+	return coreexecutor.Response{}, &coreauth.Error{Code: "not_implemented", Message: "Execute not implemented"}
+}
+
+func (e *invalidModelStreamExecutor) ExecuteStream(_ context.Context, auth *coreauth.Auth, _ coreexecutor.Request, _ coreexecutor.Options) (*coreexecutor.StreamResult, error) {
+	authID := ""
+	if auth != nil {
+		authID = auth.ID
+	}
+
+	e.mu.Lock()
+	e.calls++
+	e.authIDs = append(e.authIDs, authID)
+	e.mu.Unlock()
+
+	return nil, &coreauth.Error{
+		Message:    `{"detail":"The 'gpt-5.1-codex' model is not supported when using Codex with a ChatGPT account."}`,
+		HTTPStatus: http.StatusBadRequest,
+	}
+}
+
+func (e *invalidModelStreamExecutor) Refresh(ctx context.Context, auth *coreauth.Auth) (*coreauth.Auth, error) {
+	return auth, nil
+}
+
+func (e *invalidModelStreamExecutor) CountTokens(context.Context, *coreauth.Auth, coreexecutor.Request, coreexecutor.Options) (coreexecutor.Response, error) {
+	return coreexecutor.Response{}, &coreauth.Error{Code: "not_implemented", Message: "CountTokens not implemented"}
+}
+
+func (e *invalidModelStreamExecutor) HttpRequest(ctx context.Context, auth *coreauth.Auth, req *http.Request) (*http.Response, error) {
+	return nil, &coreauth.Error{
+		Code:       "not_implemented",
+		Message:    "HttpRequest not implemented",
+		HTTPStatus: http.StatusNotImplemented,
+	}
+}
+
+func (e *invalidModelStreamExecutor) AuthIDs() []string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	out := make([]string, len(e.authIDs))
+	copy(out, e.authIDs)
+	return out
 }
 
 func (e *authAwareStreamExecutor) Identifier() string { return "codex" }
@@ -576,6 +630,91 @@ func TestExecuteStreamWithAuthManager_GroupedRouteDoesNotBootstrapRetry(t *testi
 	if gotErr == nil {
 		t.Fatalf("expected terminal error, got nil")
 	}
+	authIDs := executor.AuthIDs()
+	if len(authIDs) != 1 {
+		t.Fatalf("expected exactly 1 upstream attempt, got %v", authIDs)
+	}
+	if authIDs[0] != "auth1" {
+		t.Fatalf("expected grouped route to stop on auth1, got %v", authIDs)
+	}
+}
+
+func TestExecuteStreamWithAuthManager_GroupedRouteRequestContextDoesNotRetryInvalidModel(t *testing.T) {
+	executor := &invalidModelStreamExecutor{}
+	manager := coreauth.NewManager(nil, nil, nil)
+	manager.RegisterExecutor(executor)
+
+	auth1 := &coreauth.Auth{
+		ID:       "auth1",
+		Provider: "codex",
+		Status:   coreauth.StatusActive,
+		Prefix:   "pro",
+		Metadata: map[string]any{"email": "test1@example.com"},
+	}
+	if _, err := manager.Register(context.Background(), auth1); err != nil {
+		t.Fatalf("manager.Register(auth1): %v", err)
+	}
+
+	auth2 := &coreauth.Auth{
+		ID:       "auth2",
+		Provider: "codex",
+		Status:   coreauth.StatusActive,
+		Prefix:   "pro",
+		Metadata: map[string]any{"email": "test2@example.com"},
+	}
+	if _, err := manager.Register(context.Background(), auth2); err != nil {
+		t.Fatalf("manager.Register(auth2): %v", err)
+	}
+
+	registry.GetGlobalRegistry().RegisterClient(auth1.ID, auth1.Provider, []*registry.ModelInfo{{ID: "gpt-5.1-codex"}})
+	registry.GetGlobalRegistry().RegisterClient(auth2.ID, auth2.Provider, []*registry.ModelInfo{{ID: "gpt-5.1-codex"}})
+	t.Cleanup(func() {
+		registry.GetGlobalRegistry().UnregisterClient(auth1.ID)
+		registry.GetGlobalRegistry().UnregisterClient(auth2.ID)
+	})
+
+	recorder := httptest.NewRecorder()
+	ginCtx, _ := gin.CreateTestContext(recorder)
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	req = req.WithContext(routing.WithPathRouteContext(req.Context(), &routing.PathRouteContext{
+		RoutePath: "/openai/plus",
+		Group:     "pro",
+		Fallback:  "none",
+	}))
+	ginCtx.Request = req
+	ctx := context.WithValue(context.Background(), util.ContextKeyGin, ginCtx)
+
+	handler := NewBaseAPIHandlers(&sdkconfig.SDKConfig{
+		Streaming: sdkconfig.StreamingConfig{
+			BootstrapRetries: 1,
+		},
+	}, manager)
+	dataChan, _, errChan := handler.ExecuteStreamWithAuthManager(ctx, "openai-response", "gpt-5.1-codex", []byte(`{"model":"gpt-5.1-codex","stream":true}`), "")
+	if errChan == nil {
+		t.Fatalf("expected non-nil error channel")
+	}
+
+	if dataChan != nil {
+		for chunk := range dataChan {
+			if len(chunk) > 0 {
+				t.Fatalf("expected no payload, got %q", string(chunk))
+			}
+		}
+	}
+
+	var gotErr *interfaces.ErrorMessage
+	for msg := range errChan {
+		if msg != nil {
+			gotErr = msg
+		}
+	}
+	if gotErr == nil {
+		t.Fatal("expected terminal error")
+	}
+	if gotErr.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", gotErr.StatusCode, http.StatusBadRequest)
+	}
+
 	authIDs := executor.AuthIDs()
 	if len(authIDs) != 1 {
 		t.Fatalf("expected exactly 1 upstream attempt, got %v", authIDs)

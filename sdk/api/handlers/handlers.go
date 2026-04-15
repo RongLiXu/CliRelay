@@ -247,6 +247,16 @@ func requestExecutionMetadata(ctx context.Context) map[string]any {
 					routeFallback = strings.TrimSpace(route.Fallback)
 				}
 			}
+			if (routeGroup == "" || routeFallback == "") && ginCtx.Request != nil {
+				if route := internalrouting.PathRouteContextFromContext(ginCtx.Request.Context()); route != nil {
+					if routeGroup == "" {
+						routeGroup = strings.TrimSpace(route.Group)
+					}
+					if routeFallback == "" {
+						routeFallback = strings.TrimSpace(route.Fallback)
+					}
+				}
+			}
 		}
 	}
 	if key == "" {

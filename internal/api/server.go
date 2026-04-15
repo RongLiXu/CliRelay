@@ -435,7 +435,15 @@ func (s *Server) setupRoutes() {
 		} else {
 			c.Request.RequestURI = apiPath
 		}
+		// Gin's NoRoute preloads 404 before our rewrite. Reset to 200 so the
+		// rewritten handler can emit a normal success status when it does not
+		// explicitly call WriteHeader itself.
+		c.Status(http.StatusOK)
 		s.engine.HandleContext(c)
+		// HandleContext resets c.handlers to the rewritten route chain but
+		// restores the old index afterwards. Abort the outer NoRoute chain so
+		// Gin cannot continue into the rewritten handlers a second time.
+		c.Abort()
 	})
 
 	// Root endpoint

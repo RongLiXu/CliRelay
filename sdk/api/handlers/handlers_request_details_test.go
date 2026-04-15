@@ -193,3 +193,27 @@ func TestRequestExecutionMetadata_UsesPathRouteContextFromRequestContext(t *test
 		t.Fatalf("route_fallback = %v, want %q", got, "none")
 	}
 }
+
+func TestRequestExecutionMetadata_UsesGinRequestContextPathRouteAfterHandleContextReset(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	route := &internalrouting.PathRouteContext{
+		RoutePath: "/openai/plus",
+		Group:     "pro",
+		Fallback:  "none",
+	}
+	req := httptest.NewRequest("POST", "/v1/responses", nil)
+	req = req.WithContext(internalrouting.WithPathRouteContext(req.Context(), route))
+
+	ginCtx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ginCtx.Request = req
+
+	ctx := context.WithValue(context.Background(), util.ContextKeyGin, ginCtx)
+	meta := requestExecutionMetadata(ctx)
+	if got := meta["route_group"]; got != "pro" {
+		t.Fatalf("route_group = %v, want %q", got, "pro")
+	}
+	if got := meta["route_fallback"]; got != "none" {
+		t.Fatalf("route_fallback = %v, want %q", got, "none")
+	}
+}
