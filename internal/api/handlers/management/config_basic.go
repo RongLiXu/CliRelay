@@ -15,6 +15,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/api/bodyutil"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/util"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 	sdkconfig "github.com/router-for-me/CLIProxyAPI/v6/sdk/config"
 	log "github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v3"
@@ -185,6 +186,8 @@ func sanitizeConfigForAPI(cfg *config.Config) *config.Config {
 type releaseInfo struct {
 	TagName string `json:"tag_name"`
 	Name    string `json:"name"`
+	Body    string `json:"body"`
+	HTMLURL string `json:"html_url"`
 }
 
 // GetLatestVersion returns the latest release version from GitHub without downloading assets.
@@ -298,6 +301,14 @@ func (h *Handler) PutConfigYAML(c *gin.Context) {
 	}()
 	_, err = config.LoadConfigOptional(tempFile, false)
 	if err != nil {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "invalid_config", "message": err.Error()})
+		return
+	}
+	var auths []*coreauth.Auth
+	if h != nil && h.authManager != nil {
+		auths = h.authManager.List()
+	}
+	if err = validateRoutingAndAPIKeyRestrictions(&cfg, auths); err != nil {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "invalid_config", "message": err.Error()})
 		return
 	}

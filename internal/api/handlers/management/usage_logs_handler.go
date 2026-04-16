@@ -5,10 +5,20 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
 )
+
+const authFileGroupTrendCacheTTL = 30 * time.Second
+
+type authFileGroupTrendResponse struct {
+	Days        int                     `json:"days"`
+	Group       string                  `json:"group"`
+	Points      []usage.DailyCountPoint `json:"points"`
+	QuotaPoints []usage.DailyQuotaPoint `json:"quota_points"`
+}
 
 // GetUsageLogs returns paginated, filterable request log entries from SQLite.
 // It enriches each log item with resolved api_key_name and channel_name
@@ -243,8 +253,8 @@ func intQueryDefault(c *gin.Context, key string, def int) int {
 	return n
 }
 
-func normalizeLogContentFormat(c *gin.Context) string {
-	format := strings.ToLower(strings.TrimSpace(c.Query("format")))
+func normalizeLogContentFormatValue(format string) string {
+	format = strings.ToLower(strings.TrimSpace(format))
 	if format == "" {
 		return "json"
 	}
@@ -256,8 +266,12 @@ func normalizeLogContentFormat(c *gin.Context) string {
 	}
 }
 
-func normalizeLogContentPartQuery(c *gin.Context) string {
-	part := strings.ToLower(strings.TrimSpace(c.Query("part")))
+func normalizeLogContentFormat(c *gin.Context) string {
+	return normalizeLogContentFormatValue(c.Query("format"))
+}
+
+func normalizeLogContentPartValue(part string) string {
+	part = strings.ToLower(strings.TrimSpace(part))
 	if part == "" {
 		return "both"
 	}
@@ -267,6 +281,10 @@ func normalizeLogContentPartQuery(c *gin.Context) string {
 	default:
 		return "both"
 	}
+}
+
+func normalizeLogContentPartQuery(c *gin.Context) string {
+	return normalizeLogContentPartValue(c.Query("part"))
 }
 
 // GetLogContent returns the stored request/response content for a single log entry.
@@ -328,19 +346,25 @@ func (h *Handler) GetLogContent(c *gin.Context) {
 // This is a public endpoint (no management key required) that strips sensitive
 // fields (source/auth_index/channel_name) before returning.
 func (h *Handler) GetPublicUsageLogs(c *gin.Context) {
-	apiKey := strings.TrimSpace(c.Query("api_key"))
+	req, status, message := readPublicLookupRequest(c)
+	if message != "" {
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	apiKey := req.APIKey
 	if apiKey == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "api_key parameter is required"})
 		return
 	}
 
 	params := usage.LogQueryParams{
-		Page:   intQueryDefault(c, "page", 1),
-		Size:   intQueryDefault(c, "size", 50),
-		Days:   intQueryDefault(c, "days", 7),
+		Page:   req.Page,
+		Size:   req.Size,
+		Days:   req.Days,
 		APIKey: apiKey,
-		Model:  strings.TrimSpace(c.Query("model")),
-		Status: strings.TrimSpace(c.Query("status")),
+		Model:  req.Model,
+		Status: req.Status,
 	}
 
 	result, err := usage.QueryLogs(params)
@@ -386,13 +410,19 @@ func (h *Handler) GetPublicUsageLogs(c *gin.Context) {
 // This is a public endpoint (no management key required) that provides lightweight
 // daily series and model distribution data for rendering charts.
 func (h *Handler) GetPublicUsageChartData(c *gin.Context) {
-	apiKey := strings.TrimSpace(c.Query("api_key"))
+	req, status, message := readPublicLookupRequest(c)
+	if message != "" {
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	apiKey := req.APIKey
 	if apiKey == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "api_key parameter is required"})
 		return
 	}
 
-	days := intQueryDefault(c, "days", 7)
+	days := req.Days
 
 	daily, err := usage.QueryDailySeries(apiKey, days)
 	if err != nil {
@@ -429,7 +459,13 @@ func (h *Handler) GetPublicUsageChartData(c *gin.Context) {
 // GetPublicLogContent returns the stored request/response content for a single log entry,
 // but only if it belongs to the specified API key. This is a public endpoint.
 func (h *Handler) GetPublicLogContent(c *gin.Context) {
-	apiKey := strings.TrimSpace(c.Query("api_key"))
+	req, status, message := readPublicLookupRequest(c)
+	if message != "" {
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	apiKey := req.APIKey
 	if apiKey == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "api_key parameter is required"})
 		return
@@ -442,8 +478,8 @@ func (h *Handler) GetPublicLogContent(c *gin.Context) {
 		return
 	}
 
-	part := normalizeLogContentPartQuery(c)
-	format := normalizeLogContentFormat(c)
+	part := req.Part
+	format := req.Format
 
 	if format == "text" && part == "both" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "format=text requires part=input or part=output"})
@@ -583,4 +619,108 @@ func (h *Handler) GetEntityUsageStats(c *gin.Context) {
 		"source":     sourceStats,
 		"auth_index": authIndexStats,
 	})
+}
+
+func (h *Handler) GetAuthFileGroupTrend(c *gin.Context) {
+	group := strings.ToLower(strings.TrimSpace(c.Query("group")))
+	if group == "" {
+		group = "all"
+	}
+	days := intQueryDefault(c, "days", 7)
+	if days > 7 {
+		days = 7
+	}
+
+	cacheKey := group + ":" + strconv.Itoa(days)
+	if cached, ok := h.getTrendCache(cacheKey); ok {
+		c.JSON(http.StatusOK, cached)
+		return
+	}
+
+	authIndexes := h.authIndexesForProviderGroup(group)
+	points, err := usage.QueryDailyCallsByAuthIndexes(authIndexes, days)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if points == nil {
+		points = []usage.DailyCountPoint{}
+	}
+	quotaPoints, err := usage.QueryDailyQuotaByAuthIndexes(authIndexes, "code_week", days)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if quotaPoints == nil {
+		quotaPoints = []usage.DailyQuotaPoint{}
+	}
+	payload := authFileGroupTrendResponse{Days: days, Group: group, Points: points, QuotaPoints: quotaPoints}
+	h.setTrendCache(cacheKey, payload)
+	c.JSON(http.StatusOK, payload)
+}
+
+func (h *Handler) authIndexesForProviderGroup(group string) []string {
+	if h == nil || h.authManager == nil {
+		return []string{}
+	}
+	auths := h.authManager.List()
+	indexes := make([]string, 0, len(auths))
+	for _, auth := range auths {
+		if auth == nil {
+			continue
+		}
+		provider := strings.ToLower(strings.TrimSpace(auth.Provider))
+		if group != "all" && provider != group {
+			continue
+		}
+		auth.EnsureIndex()
+		if idx := strings.TrimSpace(auth.Index); idx != "" {
+			indexes = append(indexes, idx)
+		}
+	}
+	return indexes
+}
+
+func (h *Handler) getTrendCache(key string) (authFileGroupTrendResponse, bool) {
+	if h == nil {
+		return authFileGroupTrendResponse{}, false
+	}
+	h.trendCacheMu.Lock()
+	defer h.trendCacheMu.Unlock()
+	entry, ok := h.trendCache[key]
+	if !ok || time.Now().After(entry.expiresAt) {
+		if ok {
+			delete(h.trendCache, key)
+		}
+		return authFileGroupTrendResponse{}, false
+	}
+	payload, ok := entry.payload.(authFileGroupTrendResponse)
+	return payload, ok
+}
+
+func (h *Handler) setTrendCache(key string, payload authFileGroupTrendResponse) {
+	if h == nil {
+		return
+	}
+	h.trendCacheMu.Lock()
+	defer h.trendCacheMu.Unlock()
+	if h.trendCache == nil {
+		h.trendCache = make(map[string]trendCacheEntry)
+	}
+	now := time.Now()
+	for k, entry := range h.trendCache {
+		if now.After(entry.expiresAt) {
+			delete(h.trendCache, k)
+		}
+	}
+	h.trendCache[key] = trendCacheEntry{expiresAt: now.Add(authFileGroupTrendCacheTTL), payload: payload}
+}
+
+func (h *Handler) clearTrendCache() {
+	if h == nil {
+		return
+	}
+	h.trendCacheMu.Lock()
+	defer h.trendCacheMu.Unlock()
+	h.trendCache = make(map[string]trendCacheEntry)
 }

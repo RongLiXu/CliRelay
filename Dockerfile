@@ -3,6 +3,7 @@ FROM --platform=$BUILDPLATFORM alpine:3.22.0 AS frontend-source
 
 ARG FRONTEND_REPOSITORY=https://github.com/kittors/codeProxy.git
 ARG FRONTEND_REF=main
+ARG FRONTEND_COMMIT=
 
 RUN apk add --no-cache git ca-certificates
 
@@ -10,8 +11,15 @@ WORKDIR /src
 
 # Local `docker compose up -d` from the CliRelay repo should always build the
 # current management panel instead of depending on a separately checked out
-# `frontend/` directory or an outdated published image.
-RUN git clone --depth=1 --branch "${FRONTEND_REF}" "${FRONTEND_REPOSITORY}" frontend
+# `frontend/` directory or an outdated published image. FRONTEND_COMMIT is part
+# of this layer on purpose: a moving branch name alone is invisible to Docker's
+# cache, so the exact frontend SHA must bust the clone layer.
+RUN git clone --depth=1 --branch "${FRONTEND_REF}" "${FRONTEND_REPOSITORY}" frontend \
+  && if [ -n "${FRONTEND_COMMIT}" ]; then \
+    cd frontend \
+    && git fetch --depth=1 origin "${FRONTEND_COMMIT}" \
+    && git checkout --detach "${FRONTEND_COMMIT}"; \
+  fi
 
 # ── Frontend build ───────────────────────────────────────────────────────────
 FROM --platform=$BUILDPLATFORM oven/bun:1 AS frontend-builder
@@ -46,14 +54,19 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
     -X 'github.com/router-for-me/CLIProxyAPI/v6/internal/buildinfo.BuildDate=${BUILD_DATE}'" \
   -o ./CLIProxyAPI ./cmd/server/
 
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
+  -ldflags="-s -w" \
+  -o ./clirelay-updater ./cmd/updater/
+
 # ── Runtime ──────────────────────────────────────────────────────────────────
 FROM alpine:3.22.0
 
-RUN apk add --no-cache tzdata ca-certificates
+RUN apk add --no-cache tzdata ca-certificates docker-cli docker-cli-compose
 
 RUN mkdir -p /CLIProxyAPI/panel
 
 COPY --from=backend-builder /app/CLIProxyAPI /CLIProxyAPI/CLIProxyAPI
+COPY --from=backend-builder /app/clirelay-updater /CLIProxyAPI/clirelay-updater
 COPY --from=frontend-builder /frontend/dist/ /CLIProxyAPI/panel/
 
 COPY config.example.yaml /CLIProxyAPI/config.example.yaml

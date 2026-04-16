@@ -564,7 +564,7 @@ func (m *Manager) Execute(ctx context.Context, providers []string, req cliproxye
 			return resp, nil
 		}
 		lastErr = errExec
-		wait, shouldRetry := m.shouldRetryAfterError(errExec, attempt, normalized, req.Model, maxWait)
+		wait, shouldRetry := m.shouldRetryAfterError(errExec, attempt, normalized, req.Model, maxWait, opts.Metadata)
 		if !shouldRetry {
 			break
 		}
@@ -595,7 +595,7 @@ func (m *Manager) ExecuteCount(ctx context.Context, providers []string, req clip
 			return resp, nil
 		}
 		lastErr = errExec
-		wait, shouldRetry := m.shouldRetryAfterError(errExec, attempt, normalized, req.Model, maxWait)
+		wait, shouldRetry := m.shouldRetryAfterError(errExec, attempt, normalized, req.Model, maxWait, opts.Metadata)
 		if !shouldRetry {
 			break
 		}
@@ -626,7 +626,7 @@ func (m *Manager) ExecuteStream(ctx context.Context, providers []string, req cli
 			return result, nil
 		}
 		lastErr = errStream
-		wait, shouldRetry := m.shouldRetryAfterError(errStream, attempt, normalized, req.Model, maxWait)
+		wait, shouldRetry := m.shouldRetryAfterError(errStream, attempt, normalized, req.Model, maxWait, opts.Metadata)
 		if !shouldRetry {
 			break
 		}
@@ -646,6 +646,7 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 	}
 	routeModel := req.Model
 	opts = ensureRequestedModelMetadata(opts, routeModel)
+	singlePickRoute := isSinglePickRouteRequest(opts.Metadata)
 	tried := make(map[string]struct{})
 	var lastErr error
 	for {
@@ -688,6 +689,9 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 			if isRequestInvalidError(errExec) {
 				return cliproxyexecutor.Response{}, errExec
 			}
+			if singlePickRoute {
+				return cliproxyexecutor.Response{}, errExec
+			}
 			lastErr = errExec
 			continue
 		}
@@ -702,6 +706,7 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
 	}
 	routeModel := req.Model
 	opts = ensureRequestedModelMetadata(opts, routeModel)
+	singlePickRoute := isSinglePickRouteRequest(opts.Metadata)
 	tried := make(map[string]struct{})
 	var lastErr error
 	for {
@@ -744,6 +749,9 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
 			if isRequestInvalidError(errExec) {
 				return cliproxyexecutor.Response{}, errExec
 			}
+			if singlePickRoute {
+				return cliproxyexecutor.Response{}, errExec
+			}
 			lastErr = errExec
 			continue
 		}
@@ -758,6 +766,7 @@ func (m *Manager) executeStreamMixedOnce(ctx context.Context, providers []string
 	}
 	routeModel := req.Model
 	opts = ensureRequestedModelMetadata(opts, routeModel)
+	singlePickRoute := isSinglePickRouteRequest(opts.Metadata)
 	tried := make(map[string]struct{})
 	var lastErr error
 	for {
@@ -796,6 +805,9 @@ func (m *Manager) executeStreamMixedOnce(ctx context.Context, providers []string
 			result.RetryAfter = retryAfterFromError(errStream)
 			m.MarkResult(execCtx, result)
 			if isRequestInvalidError(errStream) {
+				return nil, errStream
+			}
+			if singlePickRoute {
 				return nil, errStream
 			}
 			lastErr = errStream
@@ -876,6 +888,10 @@ func hasRequestedModelMetadata(meta map[string]any) bool {
 	default:
 		return false
 	}
+}
+
+func isSinglePickRouteRequest(meta map[string]any) bool {
+	return routeGroupFromMetadata(meta) != ""
 }
 
 func allowedChannelsFromMetadata(meta map[string]any) map[string]struct{} {
@@ -1257,11 +1273,14 @@ func (m *Manager) closestCooldownWait(providers []string, model string, attempt 
 	return minWait, found
 }
 
-func (m *Manager) shouldRetryAfterError(err error, attempt int, providers []string, model string, maxWait time.Duration) (time.Duration, bool) {
+func (m *Manager) shouldRetryAfterError(err error, attempt int, providers []string, model string, maxWait time.Duration, meta map[string]any) (time.Duration, bool) {
 	if err == nil {
 		return 0, false
 	}
 	if maxWait <= 0 {
+		return 0, false
+	}
+	if isSinglePickRouteRequest(meta) {
 		return 0, false
 	}
 	if status := statusCodeFromError(err); status == http.StatusOK {
@@ -1601,7 +1620,82 @@ func isRequestInvalidError(err error) bool {
 	if status != http.StatusBadRequest {
 		return false
 	}
-	return strings.Contains(err.Error(), "invalid_request_error")
+	message := strings.TrimSpace(err.Error())
+	if message == "" {
+		return false
+	}
+	if strings.Contains(message, "invalid_request_error") {
+		return true
+	}
+	lowerMessage := strings.ToLower(message)
+	if strings.Contains(lowerMessage, "model is not supported") || strings.Contains(lowerMessage, "model not supported") {
+		return true
+	}
+	if strings.Contains(lowerMessage, "not supported when using codex with a chatgpt account") {
+		return true
+	}
+
+	var payload map[string]any
+	if !json.Valid([]byte(message)) {
+		return false
+	}
+	if errParse := json.Unmarshal([]byte(message), &payload); errParse != nil {
+		return false
+	}
+	lowerDetail := strings.ToLower(firstNonEmptyString(
+		nestedString(payload, "error", "type"),
+		nestedString(payload, "error", "code"),
+		nestedString(payload, "error", "message"),
+		stringValue(payload["detail"]),
+	))
+	if strings.Contains(lowerDetail, "invalid_request_error") {
+		return true
+	}
+	if strings.Contains(lowerDetail, "model is not supported") || strings.Contains(lowerDetail, "model not supported") {
+		return true
+	}
+	if strings.Contains(lowerDetail, "not supported when using codex with a chatgpt account") {
+		return true
+	}
+	return false
+}
+
+func nestedString(payload map[string]any, keys ...string) string {
+	if len(payload) == 0 || len(keys) == 0 {
+		return ""
+	}
+	current := any(payload)
+	for _, key := range keys {
+		asMap, ok := current.(map[string]any)
+		if !ok {
+			return ""
+		}
+		current = asMap[key]
+	}
+	return stringValue(current)
+}
+
+func stringValue(value any) string {
+	if value == nil {
+		return ""
+	}
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case []byte:
+		return strings.TrimSpace(string(typed))
+	default:
+		return strings.TrimSpace(fmt.Sprint(value))
+	}
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func applyAuthFailureState(auth *Auth, resultErr *Error, retryAfter *time.Duration, now time.Time) {
@@ -1694,12 +1788,12 @@ func authAllowedByChannels(auth *Auth, allowed map[string]struct{}) bool {
 	if auth == nil {
 		return false
 	}
-	channel := strings.ToLower(strings.TrimSpace(auth.ChannelName()))
-	if channel == "" {
-		return false
+	for _, identifier := range auth.ChannelIdentifiers() {
+		if _, ok := allowed[strings.ToLower(strings.TrimSpace(identifier))]; ok {
+			return true
+		}
 	}
-	_, ok := allowed[channel]
-	return ok
+	return false
 }
 
 // CanServeModelWithChannels reports whether at least one active auth in the allowed channel set supports modelID.
@@ -1708,28 +1802,7 @@ func (m *Manager) CanServeModelWithChannels(modelID string, allowed map[string]s
 	if modelID == "" {
 		return false
 	}
-	if len(allowed) == 0 {
-		return true
-	}
-	registryRef := registry.GetGlobalRegistry()
-	if registryRef == nil {
-		return false
-	}
-
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	for _, candidate := range m.auths {
-		if candidate == nil || candidate.Disabled {
-			continue
-		}
-		if !authAllowedByChannels(candidate, allowed) {
-			continue
-		}
-		if registryRef.ClientSupportsModel(candidate.ID, modelID) {
-			return true
-		}
-	}
-	return false
+	return m.CanServeModelWithScopes(modelID, allowed, nil, "")
 }
 
 // GetByID retrieves an auth entry by its ID.
@@ -1797,6 +1870,10 @@ func (m *Manager) CloseExecutionSession(sessionID string) {
 func (m *Manager) pickNext(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, tried map[string]struct{}) (*Auth, ProviderExecutor, error) {
 	pinnedAuthID := pinnedAuthIDFromMetadata(opts.Metadata)
 	allowedChannels := allowedChannelsFromMetadata(opts.Metadata)
+	allowedGroups := allowedChannelGroupsFromMetadata(opts.Metadata)
+	routeGroup := routeGroupFromMetadata(opts.Metadata)
+	routeFallback := routeFallbackFromMetadata(opts.Metadata)
+	cfg, _ := m.runtimeConfig.Load().(*internalconfig.Config)
 
 	m.mu.RLock()
 	executor, okExecutor := m.executors[provider]
@@ -1804,7 +1881,6 @@ func (m *Manager) pickNext(ctx context.Context, provider, model string, opts cli
 		m.mu.RUnlock()
 		return nil, nil, &Error{Code: "executor_not_found", Message: "executor not registered"}
 	}
-	candidates := make([]*Auth, 0, len(m.auths))
 	modelKey := strings.TrimSpace(model)
 	// Always use base model name (without thinking suffix) for auth matching.
 	if modelKey != "" {
@@ -1814,23 +1890,41 @@ func (m *Manager) pickNext(ctx context.Context, provider, model string, opts cli
 		}
 	}
 	registryRef := registry.GetGlobalRegistry()
-	for _, candidate := range m.auths {
-		if candidate.Provider != provider || candidate.Disabled {
-			continue
+	buildCandidates := func(enforceRouteGroup bool) []*Auth {
+		candidates := make([]*Auth, 0, len(m.auths))
+		for _, candidate := range m.auths {
+			if candidate.Provider != provider || candidate.Disabled {
+				continue
+			}
+			if pinnedAuthID != "" && candidate.ID != pinnedAuthID {
+				continue
+			}
+			if !authAllowedByChannels(candidate, allowedChannels) {
+				continue
+			}
+			if !authAllowedByGroups(cfg, candidate, allowedGroups) {
+				continue
+			}
+			if enforceRouteGroup && !authInRouteGroup(cfg, candidate, routeGroup) {
+				continue
+			}
+			if _, used := tried[candidate.ID]; used {
+				continue
+			}
+			if modelKey != "" && !candidateSupportsModel(cfg, registryRef, candidate, modelKey, routeGroup, allowedGroups) {
+				continue
+			}
+			scopedRouteGroup := ""
+			if enforceRouteGroup {
+				scopedRouteGroup = routeGroup
+			}
+			candidates = append(candidates, prepareCandidateForSelection(cfg, candidate, scopedRouteGroup, allowedGroups))
 		}
-		if pinnedAuthID != "" && candidate.ID != pinnedAuthID {
-			continue
-		}
-		if !authAllowedByChannels(candidate, allowedChannels) {
-			continue
-		}
-		if _, used := tried[candidate.ID]; used {
-			continue
-		}
-		if modelKey != "" && registryRef != nil && !registryRef.ClientSupportsModel(candidate.ID, modelKey) {
-			continue
-		}
-		candidates = append(candidates, candidate)
+		return candidates
+	}
+	candidates := buildCandidates(routeGroup != "")
+	if len(candidates) == 0 && routeGroup != "" && routeFallback == "default" {
+		candidates = buildCandidates(false)
 	}
 	if len(candidates) == 0 {
 		m.mu.RUnlock()
@@ -1861,6 +1955,10 @@ func (m *Manager) pickNext(ctx context.Context, provider, model string, opts cli
 func (m *Manager) pickNextMixed(ctx context.Context, providers []string, model string, opts cliproxyexecutor.Options, tried map[string]struct{}) (*Auth, ProviderExecutor, string, error) {
 	pinnedAuthID := pinnedAuthIDFromMetadata(opts.Metadata)
 	allowedChannels := allowedChannelsFromMetadata(opts.Metadata)
+	allowedGroups := allowedChannelGroupsFromMetadata(opts.Metadata)
+	routeGroup := routeGroupFromMetadata(opts.Metadata)
+	routeFallback := routeFallbackFromMetadata(opts.Metadata)
+	cfg, _ := m.runtimeConfig.Load().(*internalconfig.Config)
 
 	providerSet := make(map[string]struct{}, len(providers))
 	for _, provider := range providers {
@@ -1875,7 +1973,6 @@ func (m *Manager) pickNextMixed(ctx context.Context, providers []string, model s
 	}
 
 	m.mu.RLock()
-	candidates := make([]*Auth, 0, len(m.auths))
 	modelKey := strings.TrimSpace(model)
 	// Always use base model name (without thinking suffix) for auth matching.
 	if modelKey != "" {
@@ -1885,33 +1982,51 @@ func (m *Manager) pickNextMixed(ctx context.Context, providers []string, model s
 		}
 	}
 	registryRef := registry.GetGlobalRegistry()
-	for _, candidate := range m.auths {
-		if candidate == nil || candidate.Disabled {
-			continue
+	buildCandidates := func(enforceRouteGroup bool) []*Auth {
+		candidates := make([]*Auth, 0, len(m.auths))
+		for _, candidate := range m.auths {
+			if candidate == nil || candidate.Disabled {
+				continue
+			}
+			if pinnedAuthID != "" && candidate.ID != pinnedAuthID {
+				continue
+			}
+			if !authAllowedByChannels(candidate, allowedChannels) {
+				continue
+			}
+			if !authAllowedByGroups(cfg, candidate, allowedGroups) {
+				continue
+			}
+			if enforceRouteGroup && !authInRouteGroup(cfg, candidate, routeGroup) {
+				continue
+			}
+			providerKey := strings.TrimSpace(strings.ToLower(candidate.Provider))
+			if providerKey == "" {
+				continue
+			}
+			if _, ok := providerSet[providerKey]; !ok {
+				continue
+			}
+			if _, used := tried[candidate.ID]; used {
+				continue
+			}
+			if _, ok := m.executors[providerKey]; !ok {
+				continue
+			}
+			if modelKey != "" && !candidateSupportsModel(cfg, registryRef, candidate, modelKey, routeGroup, allowedGroups) {
+				continue
+			}
+			scopedRouteGroup := ""
+			if enforceRouteGroup {
+				scopedRouteGroup = routeGroup
+			}
+			candidates = append(candidates, prepareCandidateForSelection(cfg, candidate, scopedRouteGroup, allowedGroups))
 		}
-		if pinnedAuthID != "" && candidate.ID != pinnedAuthID {
-			continue
-		}
-		if !authAllowedByChannels(candidate, allowedChannels) {
-			continue
-		}
-		providerKey := strings.TrimSpace(strings.ToLower(candidate.Provider))
-		if providerKey == "" {
-			continue
-		}
-		if _, ok := providerSet[providerKey]; !ok {
-			continue
-		}
-		if _, used := tried[candidate.ID]; used {
-			continue
-		}
-		if _, ok := m.executors[providerKey]; !ok {
-			continue
-		}
-		if modelKey != "" && registryRef != nil && !registryRef.ClientSupportsModel(candidate.ID, modelKey) {
-			continue
-		}
-		candidates = append(candidates, candidate)
+		return candidates
+	}
+	candidates := buildCandidates(routeGroup != "")
+	if len(candidates) == 0 && routeGroup != "" && routeFallback == "default" {
+		candidates = buildCandidates(false)
 	}
 	if len(candidates) == 0 {
 		m.mu.RUnlock()

@@ -1,12 +1,14 @@
 package management
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -123,7 +125,7 @@ func TestGetUsageLogs_EmptyDB_DoesNotReturnNullSlices(t *testing.T) {
 	}
 
 	var payload struct {
-		Items []any `json:"items"`
+		Items   []any `json:"items"`
 		Filters struct {
 			APIKeys     []string          `json:"api_keys"`
 			APIKeyNames map[string]string `json:"api_key_names"`
@@ -152,7 +154,204 @@ func TestGetUsageLogs_EmptyDB_DoesNotReturnNullSlices(t *testing.T) {
 	}
 }
 
+func TestGetAuthFileGroupTrendAggregatesByProvider(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "usage.db")
+	if err := usage.InitDB(dbPath, config.RequestLogStorageConfig{}, time.UTC); err != nil {
+		t.Fatalf("InitDB: %v", err)
+	}
+	t.Cleanup(func() {
+		usage.CloseDB()
+		_ = os.Remove(dbPath)
+		_ = os.Remove(dbPath + "-wal")
+		_ = os.Remove(dbPath + "-shm")
+	})
+
+	store := &memoryAuthStore{}
+	manager := coreauth.NewManager(store, nil, nil)
+	codexAuth, err := manager.Register(context.Background(), &coreauth.Auth{
+		ID:       "codex-auth-trend",
+		FileName: "codex.json",
+		Provider: "codex",
+		Label:    "GptPlus1",
+	})
+	if err != nil {
+		t.Fatalf("register codex auth: %v", err)
+	}
+	otherAuth, err := manager.Register(context.Background(), &coreauth.Auth{
+		ID:       "kimi-auth-trend",
+		FileName: "kimi.json",
+		Provider: "kimi",
+		Label:    "Kimi",
+	})
+	if err != nil {
+		t.Fatalf("register kimi auth: %v", err)
+	}
+
+	now := time.Now().UTC()
+	usage.InsertLog(
+		"", "", "gpt-5.4", "codex-source", "GptPlus1", codexAuth.Index,
+		false, now, 1, 1, usage.TokenStats{TotalTokens: 1}, "", "",
+	)
+	usage.InsertLog(
+		"", "", "kimi-k2.5", "kimi-source", "Kimi", otherAuth.Index,
+		false, now, 1, 1, usage.TokenStats{TotalTokens: 1}, "", "",
+	)
+	codexWeekly := 70.0
+	kimiWeekly := 30.0
+	if err := usage.RecordDailyQuotaSnapshot(codexAuth.Index, "codex", map[string]*float64{"code_week": &codexWeekly}); err != nil {
+		t.Fatalf("record codex quota snapshot: %v", err)
+	}
+	if err := usage.RecordDailyQuotaSnapshot(otherAuth.Index, "kimi", map[string]*float64{"code_week": &kimiWeekly}); err != nil {
+		t.Fatalf("record kimi quota snapshot: %v", err)
+	}
+
+	h := &Handler{cfg: &config.Config{}, authManager: manager}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodGet, "/usage/auth-file-group-trend?group=codex&days=7", nil)
+
+	h.GetAuthFileGroupTrend(c)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d, body=%s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		Group  string `json:"group"`
+		Points []struct {
+			Date     string `json:"date"`
+			Requests int64  `json:"requests"`
+		} `json:"points"`
+		QuotaPoints []struct {
+			Date    string   `json:"date"`
+			Percent *float64 `json:"percent"`
+			Samples int64    `json:"samples"`
+		} `json:"quota_points"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if payload.Group != "codex" {
+		t.Fatalf("group = %q, want codex", payload.Group)
+	}
+	var total int64
+	for _, point := range payload.Points {
+		total += point.Requests
+	}
+	if total != 1 {
+		t.Fatalf("total codex requests = %d, want 1", total)
+	}
+	if len(payload.QuotaPoints) != 1 {
+		t.Fatalf("quota point count = %d, want 1", len(payload.QuotaPoints))
+	}
+	if payload.QuotaPoints[0].Percent == nil || *payload.QuotaPoints[0].Percent != 70 {
+		t.Fatalf("codex quota percent = %v, want 70", payload.QuotaPoints[0].Percent)
+	}
+	if payload.QuotaPoints[0].Samples != 1 {
+		t.Fatalf("codex quota samples = %d, want 1", payload.QuotaPoints[0].Samples)
+	}
+}
+
 func TestGetPublicUsageLogs_EmptyDB_DoesNotReturnNullModels(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "usage.db")
+	if err := usage.InitDB(dbPath, config.RequestLogStorageConfig{}, time.UTC); err != nil {
+		t.Fatalf("InitDB: %v", err)
+	}
+	t.Cleanup(func() {
+		usage.CloseDB()
+		_ = os.Remove(dbPath)
+		_ = os.Remove(dbPath + "-wal")
+		_ = os.Remove(dbPath + "-shm")
+	})
+
+	h := &Handler{
+		cfg: &config.Config{},
+	}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(
+		http.MethodPost,
+		"/v0/management/public/usage/logs",
+		bytes.NewReader([]byte(`{"api_key":"sk-test","days":7,"page":1,"size":50}`)),
+	)
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	h.GetPublicUsageLogs(c)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d, body=%s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		Filters struct {
+			Models []string `json:"models"`
+		} `json:"filters"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if payload.Filters.Models == nil {
+		t.Fatalf("filters.models is null; expected []")
+	}
+}
+
+func TestGetPublicUsageLogs_AcceptsPOSTBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "usage.db")
+	if err := usage.InitDB(dbPath, config.RequestLogStorageConfig{}, time.UTC); err != nil {
+		t.Fatalf("InitDB: %v", err)
+	}
+	t.Cleanup(func() {
+		usage.CloseDB()
+		_ = os.Remove(dbPath)
+		_ = os.Remove(dbPath + "-wal")
+		_ = os.Remove(dbPath + "-shm")
+	})
+
+	h := &Handler{
+		cfg: &config.Config{},
+	}
+
+	body := []byte(`{"api_key":"sk-test","days":7,"page":1,"size":50}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(
+		http.MethodPost,
+		"/v0/management/public/usage/logs",
+		bytes.NewReader(body),
+	)
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	h.GetPublicUsageLogs(c)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d, body=%s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		Filters struct {
+			Models []string `json:"models"`
+		} `json:"filters"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if payload.Filters.Models == nil {
+		t.Fatalf("filters.models is null; expected []")
+	}
+}
+
+func TestGetPublicUsageLogs_DoesNotReadAPIKeyFromQuery(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	tmpDir := t.TempDir()
@@ -181,19 +380,49 @@ func TestGetPublicUsageLogs_EmptyDB_DoesNotReturnNullModels(t *testing.T) {
 
 	h.GetPublicUsageLogs(c)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected status %d, got %d, body=%s", http.StatusOK, rec.Code, rec.Body.String())
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d, body=%s", http.StatusBadRequest, rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "api_key parameter is required") {
+		t.Fatalf("expected query api_key to be ignored, body=%s", rec.Body.String())
+	}
+}
+
+func TestGetPublicUsageLogs_RejectsOversizedPOSTBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "usage.db")
+	if err := usage.InitDB(dbPath, config.RequestLogStorageConfig{}, time.UTC); err != nil {
+		t.Fatalf("InitDB: %v", err)
+	}
+	t.Cleanup(func() {
+		usage.CloseDB()
+		_ = os.Remove(dbPath)
+		_ = os.Remove(dbPath + "-wal")
+		_ = os.Remove(dbPath + "-shm")
+	})
+
+	h := &Handler{
+		cfg: &config.Config{},
 	}
 
-	var payload struct {
-		Filters struct {
-			Models []string `json:"models"`
-		} `json:"filters"`
+	body := bytes.Repeat([]byte("a"), int(publicLookupBodyLimit)+1)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(
+		http.MethodPost,
+		"/v0/management/public/usage/logs",
+		bytes.NewReader(body),
+	)
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	h.GetPublicUsageLogs(c)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected status %d, got %d, body=%s", http.StatusRequestEntityTooLarge, rec.Code, rec.Body.String())
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("unmarshal response: %v", err)
-	}
-	if payload.Filters.Models == nil {
-		t.Fatalf("filters.models is null; expected []")
+	if !strings.Contains(rec.Body.String(), "request body too large") {
+		t.Fatalf("expected oversized body rejection, body=%s", rec.Body.String())
 	}
 }

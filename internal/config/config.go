@@ -21,6 +21,10 @@ import (
 const (
 	DefaultPanelGitHubRepository = "https://github.com/kittors/codeProxy"
 	DefaultPprofAddr             = "127.0.0.1:8316"
+	DefaultAutoUpdateChannel     = "main"
+	DefaultAutoUpdateRepository  = "https://github.com/kittors/CliRelay"
+	DefaultAutoUpdateDockerImage = "ghcr.io/kittors/clirelay"
+	DefaultAutoUpdateUpdaterURL  = "http://clirelay-updater:8320"
 )
 
 // Config represents the application's configuration, loaded from a YAML file.
@@ -43,8 +47,15 @@ type Config struct {
 	// TLS config controls HTTPS server settings.
 	TLS TLSConfig `yaml:"tls" json:"tls"`
 
+	// CORSAllowOrigins defines the explicit browser origins allowed to call API routes cross-origin.
+	// Leave empty to disable cross-origin browser access by default.
+	CORSAllowOrigins []string `yaml:"cors-allow-origins" json:"cors-allow-origins"`
+
 	// RemoteManagement nests management-related options under 'remote-management'.
 	RemoteManagement RemoteManagement `yaml:"remote-management" json:"-"`
+
+	// AutoUpdate controls Docker-first update checks and updater sidecar integration.
+	AutoUpdate AutoUpdateConfig `yaml:"auto-update" json:"auto-update"`
 
 	// OAuthClients stores optional OAuth client credentials used by provider login flows.
 	// When empty, the runtime may fall back to environment variables (see oauth_clients.go).
@@ -110,6 +121,9 @@ type Config struct {
 	// These control how requests appear in the Kimi console (e.g., User-Agent as source).
 	KimiHeaderDefaults KimiHeaderDefaults `yaml:"kimi-header-defaults" json:"kimi-header-defaults"`
 
+	// IdentityFingerprint controls provider-specific upstream identity headers.
+	IdentityFingerprint IdentityFingerprintConfig `yaml:"identity-fingerprint,omitempty" json:"identity-fingerprint,omitempty"`
+
 	// OpenAICompatibility defines OpenAI API compatibility configurations for external providers.
 	OpenAICompatibility []OpenAICompatibility `yaml:"openai-compatibility" json:"openai-compatibility"`
 
@@ -155,6 +169,44 @@ type KimiHeaderDefaults struct {
 	Version   string `yaml:"version" json:"version"`
 }
 
+const (
+	DefaultCodexFingerprintUserAgent     = "codex_cli_rs/0.120.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464"
+	DefaultCodexFingerprintVersion       = "0.120.0"
+	DefaultCodexFingerprintOriginator    = "codex_cli_rs"
+	DefaultCodexFingerprintWebsocketBeta = "responses_websockets=2026-02-04"
+	DefaultCodexFingerprintSessionMode   = "per-request"
+)
+
+// IdentityFingerprintConfig groups provider-specific upstream identity settings.
+type IdentityFingerprintConfig struct {
+	Codex CodexIdentityFingerprintConfig `yaml:"codex,omitempty" json:"codex,omitempty"`
+}
+
+// CodexIdentityFingerprintConfig configures Codex upstream identity headers.
+type CodexIdentityFingerprintConfig struct {
+	Enabled       bool              `yaml:"enabled" json:"enabled"`
+	UserAgent     string            `yaml:"user-agent,omitempty" json:"user-agent,omitempty"`
+	Version       string            `yaml:"version,omitempty" json:"version,omitempty"`
+	Originator    string            `yaml:"originator,omitempty" json:"originator,omitempty"`
+	WebsocketBeta string            `yaml:"websocket-beta,omitempty" json:"websocket-beta,omitempty"`
+	SessionMode   string            `yaml:"session-mode,omitempty" json:"session-mode,omitempty"`
+	SessionID     string            `yaml:"session-id,omitempty" json:"session-id,omitempty"`
+	CustomHeaders map[string]string `yaml:"custom-headers,omitempty" json:"custom-headers,omitempty"`
+}
+
+// DefaultCodexIdentityFingerprint returns the recommended Codex identity template.
+func DefaultCodexIdentityFingerprint() CodexIdentityFingerprintConfig {
+	return CodexIdentityFingerprintConfig{
+		Enabled:       false,
+		UserAgent:     DefaultCodexFingerprintUserAgent,
+		Version:       DefaultCodexFingerprintVersion,
+		Originator:    DefaultCodexFingerprintOriginator,
+		WebsocketBeta: DefaultCodexFingerprintWebsocketBeta,
+		SessionMode:   DefaultCodexFingerprintSessionMode,
+		CustomHeaders: map[string]string{},
+	}
+}
+
 // RedisConfig holds the configuration for connecting to a Redis instance for data persistence.
 type RedisConfig struct {
 	Enable   bool   `yaml:"enable" json:"enable"`
@@ -179,6 +231,8 @@ type PprofConfig struct {
 	Enable bool `yaml:"enable" json:"enable"`
 	// Addr is the host:port address for the pprof HTTP server.
 	Addr string `yaml:"addr" json:"addr"`
+	// AllowRemote permits binding pprof to non-loopback addresses.
+	AllowRemote bool `yaml:"allow-remote" json:"allow-remote"`
 }
 
 // RemoteManagement holds management API configuration under 'remote-management'.
@@ -192,6 +246,20 @@ type RemoteManagement struct {
 	// PanelGitHubRepository overrides the GitHub repository used to fetch the management panel asset.
 	// Accepts either a repository URL (https://github.com/org/repo) or an API releases endpoint.
 	PanelGitHubRepository string `yaml:"panel-github-repository"`
+}
+
+// AutoUpdateConfig holds Docker-first update check and sidecar settings.
+type AutoUpdateConfig struct {
+	// Enabled controls whether the management UI should automatically prompt for updates.
+	Enabled bool `yaml:"enabled" json:"enabled"`
+	// Channel can be auto, main, or dev. Auto infers from the running build metadata.
+	Channel string `yaml:"channel,omitempty" json:"channel,omitempty"`
+	// Repository is the GitHub repository used for branch commits and release notes.
+	Repository string `yaml:"repository,omitempty" json:"repository,omitempty"`
+	// DockerImage is the image repository pulled by the updater sidecar.
+	DockerImage string `yaml:"docker-image,omitempty" json:"docker-image,omitempty"`
+	// UpdaterURL is the internal URL of the independent updater sidecar.
+	UpdaterURL string `yaml:"updater-url,omitempty" json:"updater-url,omitempty"`
 }
 
 // QuotaExceeded defines the behavior when API quota limits are exceeded.
@@ -209,6 +277,15 @@ type RoutingConfig struct {
 	// Strategy selects the credential selection strategy.
 	// Supported values: "round-robin" (default), "fill-first".
 	Strategy string `yaml:"strategy,omitempty" json:"strategy,omitempty"`
+
+	// IncludeDefaultGroup keeps unprefixed channels addressable via the implicit "default" group.
+	IncludeDefaultGroup bool `yaml:"include-default-group,omitempty" json:"include-default-group,omitempty"`
+
+	// ChannelGroups defines named channel groups used by path routing and API key permissions.
+	ChannelGroups []RoutingChannelGroup `yaml:"channel-groups,omitempty" json:"channel-groups,omitempty"`
+
+	// PathRoutes maps URL path namespaces to channel groups.
+	PathRoutes []RoutingPathRoute `yaml:"path-routes,omitempty" json:"path-routes,omitempty"`
 }
 
 // OAuthModelAlias defines a model ID alias for a specific channel.
@@ -604,10 +681,16 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 	cfg.RequestLogStorage.MaxTotalSizeMB = 1024
 	cfg.RequestLogStorage.VacuumOnCleanup = true
 	cfg.DisableCooling = false
+	cfg.Routing.IncludeDefaultGroup = true
 	cfg.Pprof.Enable = false
 	cfg.Pprof.Addr = DefaultPprofAddr
 	cfg.AmpCode.RestrictManagementToLocalhost = false // Default to false: API key auth is sufficient
 	cfg.RemoteManagement.PanelGitHubRepository = DefaultPanelGitHubRepository
+	cfg.AutoUpdate.Enabled = true
+	cfg.AutoUpdate.Channel = DefaultAutoUpdateChannel
+	cfg.AutoUpdate.Repository = DefaultAutoUpdateRepository
+	cfg.AutoUpdate.DockerImage = DefaultAutoUpdateDockerImage
+	cfg.AutoUpdate.UpdaterURL = DefaultAutoUpdateUpdaterURL
 	if err = yaml.Unmarshal(data, &cfg); err != nil {
 		if optional {
 			// In cloud deploy mode, if YAML parsing fails, return empty config instead of error.
@@ -650,6 +733,7 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 	if cfg.RemoteManagement.PanelGitHubRepository == "" {
 		cfg.RemoteManagement.PanelGitHubRepository = DefaultPanelGitHubRepository
 	}
+	cfg.SanitizeAutoUpdate()
 
 	cfg.Pprof.Addr = strings.TrimSpace(cfg.Pprof.Addr)
 	if cfg.Pprof.Addr == "" {
@@ -687,6 +771,9 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 	// Sanitize Claude key headers
 	cfg.SanitizeClaudeKeys()
 
+	// Normalize provider identity fingerprints.
+	cfg.SanitizeIdentityFingerprint()
+
 	// Sanitize OpenAI compatibility providers: drop entries without base-url
 	cfg.SanitizeOpenAICompatibility()
 
@@ -695,6 +782,12 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 
 	// Normalize global OAuth model name aliases.
 	cfg.SanitizeOAuthModelAlias()
+
+	// Normalize routing configuration.
+	cfg.SanitizeRouting()
+
+	// Normalize API-key group restrictions.
+	cfg.SanitizeAPIKeyEntries()
 
 	// Validate raw payload rules and drop invalid entries.
 	cfg.SanitizePayloadRules()
@@ -770,6 +863,34 @@ func payloadRawString(value any) ([]byte, bool) {
 		return typed, true
 	default:
 		return nil, false
+	}
+}
+
+// SanitizeAutoUpdate normalizes Docker update settings while preserving an explicit disabled flag.
+func (cfg *Config) SanitizeAutoUpdate() {
+	if cfg == nil {
+		return
+	}
+	channel := strings.ToLower(strings.TrimSpace(cfg.AutoUpdate.Channel))
+	switch channel {
+	case "":
+		cfg.AutoUpdate.Channel = DefaultAutoUpdateChannel
+	case "main", "dev", "auto":
+		cfg.AutoUpdate.Channel = channel
+	default:
+		cfg.AutoUpdate.Channel = DefaultAutoUpdateChannel
+	}
+	cfg.AutoUpdate.Repository = strings.TrimSpace(cfg.AutoUpdate.Repository)
+	if cfg.AutoUpdate.Repository == "" {
+		cfg.AutoUpdate.Repository = DefaultAutoUpdateRepository
+	}
+	cfg.AutoUpdate.DockerImage = strings.TrimSpace(cfg.AutoUpdate.DockerImage)
+	if cfg.AutoUpdate.DockerImage == "" {
+		cfg.AutoUpdate.DockerImage = DefaultAutoUpdateDockerImage
+	}
+	cfg.AutoUpdate.UpdaterURL = strings.TrimSpace(cfg.AutoUpdate.UpdaterURL)
+	if cfg.AutoUpdate.UpdaterURL == "" {
+		cfg.AutoUpdate.UpdaterURL = DefaultAutoUpdateUpdaterURL
 	}
 }
 
